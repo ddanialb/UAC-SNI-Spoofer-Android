@@ -53,7 +53,8 @@ object LogExport {
         EngineMode.XRAY_CF -> "Engine 1 - Xray"
         EngineMode.TOR_WEBTUNNEL -> "Engine 2 - Tor WebTunnel"
         EngineMode.UAC_POW -> "Engine 3 - UAC PoW"
-        EngineMode.UAC_DIRECT -> "Engine 4 - UAC Direct"
+        EngineMode.UAC_FOXY -> "Engine 4 - Firefox VPN (Foxy)"
+        EngineMode.UAC_DIRECT -> "Engine 5 - UAC Direct"
     }
 
     /** Writes the text to the place the user picked in the system file dialog. */

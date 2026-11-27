@@ -149,6 +149,8 @@ fun MainScreen(
     // Where Back from PoW settings returns: Settings when opened from there, else the dashboard.
     var powSettingsBack by rememberSaveable { mutableStateOf(DrawerDestination.SETTINGS) }
     var torSettingsBack by rememberSaveable { mutableStateOf(DrawerDestination.SETTINGS) }
+    var homeFoxyCountriesVisible by rememberSaveable { mutableStateOf(false) }
+    var foxySettingsBack by rememberSaveable { mutableStateOf(DrawerDestination.SETTINGS) }
     var directSettingsBack by rememberSaveable { mutableStateOf(DrawerDestination.SETTINGS) }
     var xraySettingsBack by rememberSaveable { mutableStateOf(DrawerDestination.SETTINGS) }
     var connectFlowVisible by remember { mutableStateOf(false) }
@@ -262,6 +264,7 @@ fun MainScreen(
                 DrawerDestination.ADVANCED_SETTINGS,
                 DrawerDestination.POW_SETTINGS,
                 DrawerDestination.TOR_SETTINGS,
+                DrawerDestination.FOXY_SETTINGS,
                 DrawerDestination.DIRECT_SETTINGS -> DrawerDestination.SETTINGS
                 else -> DrawerDestination.HOME
             }
@@ -375,6 +378,9 @@ fun MainScreen(
                     if (it == DrawerDestination.TOR_SETTINGS && selectedDestination != DrawerDestination.TOR_SETTINGS) {
                         torSettingsBack = if (selectedDestination == DrawerDestination.SETTINGS) DrawerDestination.SETTINGS else DrawerDestination.HOME
                     }
+                    if (it == DrawerDestination.FOXY_SETTINGS && selectedDestination != DrawerDestination.FOXY_SETTINGS) {
+                        foxySettingsBack = if (selectedDestination == DrawerDestination.SETTINGS) DrawerDestination.SETTINGS else DrawerDestination.HOME
+                    }
                     if (it == DrawerDestination.DIRECT_SETTINGS && selectedDestination != DrawerDestination.DIRECT_SETTINGS) {
                         directSettingsBack = if (selectedDestination == DrawerDestination.SETTINGS) DrawerDestination.SETTINGS else DrawerDestination.HOME
                     }
@@ -444,6 +450,10 @@ fun MainScreen(
                         torSettingsBack = DrawerDestination.SETTINGS
                         selectedDestination = DrawerDestination.TOR_SETTINGS
                     },
+                    onFoxySettingsClick = {
+                        foxySettingsBack = DrawerDestination.SETTINGS
+                        selectedDestination = DrawerDestination.FOXY_SETTINGS
+                    },
                     onDirectSettingsClick = {
                         directSettingsBack = DrawerDestination.SETTINGS
                         selectedDestination = DrawerDestination.DIRECT_SETTINGS
@@ -457,6 +467,9 @@ fun MainScreen(
                 )
                 DrawerDestination.TOR_SETTINGS -> TorSettingsScreen(
                     onBack = { selectedDestination = torSettingsBack },
+                )
+                DrawerDestination.FOXY_SETTINGS -> FoxySettingsScreen(
+                    onBack = { selectedDestination = foxySettingsBack },
                 )
                 DrawerDestination.DIRECT_SETTINGS -> DirectSettingsScreen(
                     onBack = { selectedDestination = directSettingsBack },
@@ -486,6 +499,7 @@ fun MainScreen(
                             when {
                                 engineMode.isTor -> homeTorCountriesVisible = true
                                 engineMode.isPow -> homePowCountriesVisible = true
+                                engineMode.isFoxy -> homeFoxyCountriesVisible = true
                                 engineMode.isDirect -> {
                                     if (directOptionsUnlocked) homePowCountriesVisible = true
                                 }
@@ -507,12 +521,14 @@ fun MainScreen(
                     engine = when {
                         engineMode.isTor -> ConnectOverlayEngine.TOR
                         engineMode.isPow -> ConnectOverlayEngine.POW
+                        engineMode.isFoxy -> ConnectOverlayEngine.FOXY
                         engineMode.isDirect -> ConnectOverlayEngine.DIRECT
                         else -> ConnectOverlayEngine.GENERIC
                     },
                     onOpenDetails = when {
                         engineMode.isTor -> ({ connectFlowVisible = true })
                         engineMode.isPow -> ({ connectFlowVisible = true })
+                        engineMode.isFoxy -> ({ connectFlowVisible = true })
                         engineMode.isXray -> ({ connectFlowVisible = true })
                         else -> null
                     },
@@ -541,6 +557,10 @@ fun MainScreen(
             )
             PowLivePathDialog(
                 visible = connectFlowVisible && engineMode.isPow,
+                onDismissRequest = { connectFlowVisible = false },
+            )
+            FoxyLiveFlowDialog(
+                visible = connectFlowVisible && engineMode.isFoxy,
                 onDismissRequest = { connectFlowVisible = false },
             )
             if (engineMode.isXray) {
@@ -632,6 +652,11 @@ fun MainScreen(
                 },
                 onDismissRequest = { homePowCountriesVisible = false },
                 direct = engineMode.isDirect,
+            )
+            HomeFoxyCountryDialog(
+                visible = homeFoxyCountriesVisible && engineMode.isFoxy,
+                connected = state == ConnectionState.CONNECTED || state == ConnectionState.CONNECTING,
+                onDismissRequest = { homeFoxyCountriesVisible = false },
             )
             if (updateDialogVisible) {
                 AppUpdateDialog(

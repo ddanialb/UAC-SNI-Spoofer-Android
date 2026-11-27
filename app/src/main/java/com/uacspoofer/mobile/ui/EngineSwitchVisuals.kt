@@ -89,6 +89,7 @@ internal fun EngineMode.identityAccent(): Color = when (this) {
     EngineMode.XRAY_CF -> Color(0xFF7EE4FF)
     EngineMode.TOR_WEBTUNNEL -> Color(0xFFE0C4FF)
     EngineMode.UAC_POW -> Color(0xFF6FF6D0)
+    EngineMode.UAC_FOXY -> Color(0xFF8FE3FF)
     EngineMode.UAC_DIRECT -> Color(0xFFFFC46B)
 }
 
@@ -96,6 +97,7 @@ internal fun EngineMode.toHomeRemoteSlot(): HomeRemoteSlot = when (this) {
     EngineMode.XRAY_CF -> HomeRemoteSlot.EngineXray
     EngineMode.TOR_WEBTUNNEL -> HomeRemoteSlot.EngineTor
     EngineMode.UAC_POW -> HomeRemoteSlot.EnginePow
+    EngineMode.UAC_FOXY -> HomeRemoteSlot.EngineFoxy
     EngineMode.UAC_DIRECT -> HomeRemoteSlot.EngineDirect
 }
 
@@ -104,6 +106,7 @@ internal fun EngineMode.switchContentDescription(): String = when (this) {
     EngineMode.XRAY_CF -> homeText("Cloudflare SNI engine", "موتور کلودفلر")
     EngineMode.TOR_WEBTUNNEL -> homeText("Tor engine", "موتور تور")
     EngineMode.UAC_POW -> homeText("PoW engine", "موتور PoW")
+    EngineMode.UAC_FOXY -> homeText("Foxy engine (Firefox VPN)", "موتور Foxy (وی‌پی‌ان فایرفاکس)")
     EngineMode.UAC_DIRECT -> homeText("Direct engine", "موتور دایرکت")
 }
 
@@ -111,6 +114,7 @@ private fun EngineMode.identityIcon(): ImageVector = when (this) {
     EngineMode.XRAY_CF -> XrayBoltIcon
     EngineMode.TOR_WEBTUNNEL -> TorOnionIcon
     EngineMode.UAC_POW -> PowHexIcon
+    EngineMode.UAC_FOXY -> FoxyFoxIcon
     EngineMode.UAC_DIRECT -> DirectArrowIcon
 }
 
@@ -118,6 +122,7 @@ private fun EngineMode.shortName(): String = when (this) {
     EngineMode.XRAY_CF -> "Xray"
     EngineMode.TOR_WEBTUNNEL -> "Tor"
     EngineMode.UAC_POW -> "PoW"
+    EngineMode.UAC_FOXY -> "Foxy"
     EngineMode.UAC_DIRECT -> "Direct"
 }
 
@@ -345,6 +350,21 @@ private val PowHexIcon: ImageVector by lazy {
         moveTo(12f, 2.5f); lineTo(20.2f, 7.2f); lineTo(20.2f, 16.8f); lineTo(12f, 21.5f); lineTo(3.8f, 16.8f); lineTo(3.8f, 7.2f); close()
     }, {
         moveTo(8.6f, 12.2f); lineTo(11f, 14.6f); lineTo(15.6f, 9.8f)
+    })
+}
+
+/** Simple stroked fox/VPN glyph for the Foxy engine slot. */
+private val FoxyFoxIcon: ImageVector by lazy {
+    strokeIcon("Engine.FoxyFox", {
+        // ears
+        moveTo(5.5f, 4.2f); lineTo(9f, 7.4f); lineTo(15f, 7.4f); lineTo(18.5f, 4.2f)
+        moveTo(5.5f, 4.2f); curveTo(4.6f, 8.2f, 5.4f, 11.2f, 7.6f, 13.2f)
+        moveTo(18.5f, 4.2f); curveTo(19.4f, 8.2f, 18.6f, 11.2f, 16.4f, 13.2f)
+        moveTo(7.6f, 13.2f); curveTo(9f, 16.4f, 10.4f, 18.2f, 12f, 20f)
+        moveTo(16.4f, 13.2f); curveTo(15f, 16.4f, 13.6f, 18.2f, 12f, 20f)
+    }, {
+        moveTo(9.8f, 10.6f); lineTo(10.9f, 10.6f)
+        moveTo(13.1f, 10.6f); lineTo(14.2f, 10.6f)
     })
 }
 

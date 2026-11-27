@@ -100,6 +100,7 @@ internal enum class DrawerDestination {
     ADVANCED_SETTINGS,
     POW_SETTINGS,
     TOR_SETTINGS,
+    FOXY_SETTINGS,
     DIRECT_SETTINGS,
     SUPPORT,
 }
@@ -126,13 +127,14 @@ internal fun DrawerDestination.visibleFor(mode: EngineMode): Boolean = when (thi
     DrawerDestination.ADVANCED_SETTINGS -> mode.isXray
     DrawerDestination.POW_SETTINGS -> mode.isPow
     DrawerDestination.TOR_SETTINGS -> mode.isTor
+    DrawerDestination.FOXY_SETTINGS -> mode.isFoxy
     DrawerDestination.DIRECT_SETTINGS -> mode.isDirect
     else -> true
 }
 
 private fun drawerItemsFor(mode: EngineMode): List<DrawerItem> = buildList {
     add(DrawerItem(DrawerDestination.HOME, "Home", Icons.Outlined.Home))
-    if (mode.isTor || mode.isPow) {
+    if (mode.isTor || mode.isPow || mode.isFoxy) {
         add(DrawerItem(DrawerDestination.CONFIGS, "Select country", Icons.Outlined.Public))
     } else if (mode.isDirect) {
         // Engine 4 has no configs or countries: it dials sites directly.
@@ -148,6 +150,7 @@ private fun drawerItemsFor(mode: EngineMode): List<DrawerItem> = buildList {
     when {
         mode.isPow -> add(DrawerItem(DrawerDestination.POW_SETTINGS, "PoW settings", Icons.Outlined.Tune))
         mode.isTor -> add(DrawerItem(DrawerDestination.TOR_SETTINGS, "Tor settings", Icons.Outlined.Tune))
+        mode.isFoxy -> add(DrawerItem(DrawerDestination.FOXY_SETTINGS, "Foxy settings", Icons.Outlined.Tune))
         mode.isDirect -> add(DrawerItem(DrawerDestination.DIRECT_SETTINGS, "Direct settings", Icons.Outlined.Tune))
         else -> add(DrawerItem(DrawerDestination.ADVANCED_SETTINGS, "Xray settings", Icons.Outlined.Tune))
     }
@@ -483,6 +486,7 @@ private fun DrawerNavItem(
                         DrawerDestination.ADVANCED_SETTINGS -> "تنظیمات Xray"
                         DrawerDestination.POW_SETTINGS -> "تنظیمات PoW"
                         DrawerDestination.TOR_SETTINGS -> "تنظیمات Tor"
+                        DrawerDestination.FOXY_SETTINGS -> "تنظیمات Foxy"
                         DrawerDestination.DIRECT_SETTINGS -> "تنظیمات Direct"
                         DrawerDestination.SUPPORT -> "پشتیبانی"
                     },

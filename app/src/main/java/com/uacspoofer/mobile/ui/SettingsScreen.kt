@@ -178,6 +178,7 @@ internal fun SettingsScreen(
     onAdvancedSettingsClick: () -> Unit,
     onPowSettingsClick: () -> Unit,
     onTorSettingsClick: () -> Unit,
+    onFoxySettingsClick: () -> Unit = {},
     onDirectSettingsClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -252,6 +253,19 @@ internal fun SettingsScreen(
                             isPersian = isPersian,
                             showDivider = true,
                             onClick = onTorSettingsClick,
+                        )
+                    }
+                    if (engineMode.isFoxy) {
+                        SettingsNavRow(
+                            icon = Icons.Outlined.Tune,
+                            title = homeText("Foxy settings", "تنظیمات Foxy"),
+                            summary = homeText(
+                                "Firefox accounts, quota, location and upstream proxy",
+                                "حساب‌های فایرفاکس، حجم باقی‌مانده، موقعیت و پروکسی",
+                            ),
+                            isPersian = isPersian,
+                            showDivider = true,
+                            onClick = onFoxySettingsClick,
                         )
                     }
                     if (engineMode.isDirect) {

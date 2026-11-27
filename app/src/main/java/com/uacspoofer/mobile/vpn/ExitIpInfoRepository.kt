@@ -281,6 +281,7 @@ class ExitIpInfoRepository private constructor(context: Context) {
         private const val CACHE_TTL_MS = 10L * 60L * 1_000L
         const val TOR_LOOKUP_ID = "engine:tor_webtunnel"
         const val POW_LOOKUP_ID = "engine:uac_pow"
+        const val FOXY_LOOKUP_ID = "engine:uac_foxy"
 
         fun lookupId(
             profileId: String,
@@ -289,6 +290,7 @@ class ExitIpInfoRepository private constructor(context: Context) {
             powEngine: Boolean = false,
             powWarpOnly: Boolean = false,
             directModeKey: String? = null,
+            foxyEngine: Boolean = false,
         ): String = when {
             torEngine -> {
                 val country = exitCountryCode.trim().lowercase().ifBlank { "auto" }
@@ -298,6 +300,12 @@ class ExitIpInfoRepository private constructor(context: Context) {
             powEngine -> {
                 val country = exitCountryCode.trim().lowercase().ifBlank { "auto" }
                 "$POW_LOOKUP_ID:$country"
+            }
+            foxyEngine -> {
+                // Foxy egresses through a Firefox VPN edge, so its exit IP must never be served
+                // from the shared profile cache (same reasoning as Tor/PoW).
+                val country = exitCountryCode.trim().lowercase().ifBlank { "auto" }
+                "$FOXY_LOOKUP_ID:$country"
             }
             directModeKey != null -> "engine:uac_direct:$directModeKey"
             else -> profileId

@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.uacspoofer.mobile.core.ConnectionState
 import com.uacspoofer.mobile.engine.pow.PowEngineStore
 import com.uacspoofer.mobile.engine.direct.DirectStatusStore
+import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 import com.uacspoofer.mobile.engine.pow.PowLiveExit
 import com.uacspoofer.mobile.engine.tor.TorEngineStore
 import com.uacspoofer.mobile.logging.AppLogRepository
@@ -95,6 +96,7 @@ internal fun ConnectionAwareFeatureCard(
     val rawExitInfoState by exitInfoRepository.state.collectAsStateWithLifecycle()
     val powWarpOnly by PowLiveExit.warpOnlyState.collectAsStateWithLifecycle()
     val directStatus by DirectStatusStore.status.collectAsStateWithLifecycle()
+    val foxyStatus by FoxyStatusStore.status.collectAsStateWithLifecycle()
     val lookupId = ExitIpInfoRepository.lookupId(
         profile.id,
         torEngine = engineMode.isTor,
@@ -102,11 +104,13 @@ internal fun ConnectionAwareFeatureCard(
             engineMode.isTor -> torSettings.exitCountryCode
             engineMode.isPow && powWarpOnly -> ""
             engineMode.isPow -> powSettings.exitCountryCode
+            engineMode.isFoxy -> foxyStatus.countryCode
             else -> ""
         },
         powEngine = engineMode.isPow,
         powWarpOnly = engineMode.isPow && powWarpOnly,
         directModeKey = directStatus.exitLookupKey.takeIf { engineMode.isDirect },
+        foxyEngine = engineMode.isFoxy,
     )
     val exitInfoState = if (rawExitInfoState.profileId == lookupId) {
         rawExitInfoState

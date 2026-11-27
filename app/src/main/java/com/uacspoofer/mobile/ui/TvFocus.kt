@@ -82,6 +82,7 @@ internal class HomeRemoteFocus {
     val engineXray = FocusRequester()
     val engineTor = FocusRequester()
     val enginePow = FocusRequester()
+    val engineFoxy = FocusRequester()
     val engineDirect = FocusRequester()
     val connect = FocusRequester()
     val profile = FocusRequester()
@@ -104,6 +105,7 @@ internal class HomeRemoteFocus {
         HomeRemoteSlot.EngineXray -> engineXray
         HomeRemoteSlot.EngineTor -> engineTor
         HomeRemoteSlot.EnginePow -> enginePow
+        HomeRemoteSlot.EngineFoxy -> engineFoxy
         HomeRemoteSlot.EngineDirect -> engineDirect
         HomeRemoteSlot.Connect -> connect
         HomeRemoteSlot.Profile -> profile

@@ -34,6 +34,13 @@ private const val PDI = '\u2069'
 internal fun homeText(english: String, persian: String): String =
     if (LocalHomePersian.current) localizePersian(persian) else english
 
+/**
+ * [homeText] for click handlers and coroutine callbacks, where reading a CompositionLocal is
+ * illegal. Callers capture [LocalHomePersian] during composition and pass it in.
+ */
+internal fun homeText(isPersian: Boolean, english: String, persian: String): String =
+    if (isPersian) localizePersian(persian) else english
+
 @Composable
 internal fun homeLocalizedFont(): FontFamily? =
     if (LocalHomePersian.current) VazirmatnUiFd else null

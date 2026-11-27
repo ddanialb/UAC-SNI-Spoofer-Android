@@ -6,6 +6,7 @@ internal enum class HomeRemoteSlot {
     EngineXray,
     EngineTor,
     EnginePow,
+    EngineFoxy,
     EngineDirect,
     Connect,
     Profile,
@@ -64,11 +65,16 @@ internal object HomeRemoteNavigation {
         HomeRemoteSlot.EnginePow -> engineRailAction(
             dpad = dpad,
             up = HomeRemoteSlot.EngineTor,
+            down = HomeRemoteSlot.EngineFoxy,
+        )
+        HomeRemoteSlot.EngineFoxy -> engineRailAction(
+            dpad = dpad,
+            up = HomeRemoteSlot.EnginePow,
             down = HomeRemoteSlot.EngineDirect,
         )
         HomeRemoteSlot.EngineDirect -> engineRailAction(
             dpad = dpad,
-            up = HomeRemoteSlot.EnginePow,
+            up = HomeRemoteSlot.EngineFoxy,
             down = HomeRemoteSlot.Connect,
         )
         HomeRemoteSlot.Connect -> when (dpad) {

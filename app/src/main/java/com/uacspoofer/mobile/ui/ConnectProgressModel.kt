@@ -1,5 +1,7 @@
 package com.uacspoofer.mobile.ui
 
+import com.uacspoofer.mobile.engine.foxy.FoxyPhase
+
 import com.uacspoofer.mobile.auto.AutoBootstrapSnapshot
 import com.uacspoofer.mobile.auto.AutoStage
 import com.uacspoofer.mobile.auto.AutoStageState
@@ -77,6 +79,35 @@ object ConnectProgressModel {
             else -> powOrder.indexOf(p).coerceAtLeast(0)
         }
         return powLabels.mapIndexed { i, (k, en, fa) ->
+            val st = when {
+                i < pos -> MiniStepState.DONE
+                i == pos && failed -> MiniStepState.FAILED
+                i == pos -> MiniStepState.RUNNING
+                else -> MiniStepState.PENDING
+            }
+            MiniStep(k, en, fa, st)
+        }
+    }
+
+    private val foxyOrder = listOf(
+        FoxyPhase.STARTING, FoxyPhase.AUTH, FoxyPhase.EDGE, FoxyPhase.TUNNEL, FoxyPhase.CONNECTED,
+    )
+    private val foxyLabels = listOf(
+        Triple("acct", "Account", "حساب"),
+        Triple("auth", "Mozilla sign-in", "ورود موزیلا"),
+        Triple("edge", "Firefox edge", "سرور فایرفاکس"),
+        Triple("tunnel", "Tunnel", "تونل"),
+    )
+
+    /** Foxy connect stages: account → Mozilla auth/Guardian → edge → tunnel. */
+    fun foxySteps(phase: FoxyPhase): List<MiniStep> {
+        val failed = phase == FoxyPhase.FAILED
+        val pos = when (phase) {
+            FoxyPhase.CONNECTED -> foxyLabels.size
+            FoxyPhase.IDLE, FoxyPhase.FAILED -> 0
+            else -> foxyOrder.indexOf(phase).coerceAtLeast(0)
+        }
+        return foxyLabels.mapIndexed { i, (k, en, fa) ->
             val st = when {
                 i < pos -> MiniStepState.DONE
                 i == pos && failed -> MiniStepState.FAILED

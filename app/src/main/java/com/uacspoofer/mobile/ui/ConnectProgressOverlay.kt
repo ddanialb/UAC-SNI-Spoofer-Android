@@ -1,5 +1,7 @@
 package com.uacspoofer.mobile.ui
 
+import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
@@ -94,7 +96,7 @@ import com.uacspoofer.mobile.ui.theme.UacThemeState
 import com.uacspoofer.mobile.ui.theme.styleTokens
 import kotlinx.coroutines.delay
 
-enum class ConnectOverlayEngine { TOR, POW, DIRECT, GENERIC }
+enum class ConnectOverlayEngine { TOR, POW, FOXY, DIRECT, GENERIC }
 
 private enum class OverlayMode { HIDDEN, CONNECTING, SUCCESS, FAILED }
 
@@ -225,6 +227,13 @@ internal fun ConnectProgressOverlay(
                     0L,
                 )
             }
+            ConnectOverlayEngine.FOXY -> {
+                val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
+                val steps = ConnectProgressModel.foxySteps(status.phase)
+                val focused = steps.getOrNull(ConnectProgressModel.focusIndex(steps))?.detail.orEmpty()
+                val detail = if (status.detail.isNotBlank()) status.detail else focused
+                OverlayData(steps, detail, 0L)
+            }
             ConnectOverlayEngine.DIRECT -> {
                 val status = checkNotNull(directStatus)
                 val scan = status.ipScan
@@ -292,6 +301,7 @@ internal fun ConnectProgressOverlay(
         val engineName = when (engine) {
             ConnectOverlayEngine.TOR -> "Tor"
             ConnectOverlayEngine.POW -> "UAC PoW"
+            ConnectOverlayEngine.FOXY -> "Foxy"
             ConnectOverlayEngine.DIRECT -> "UAC Direct"
             ConnectOverlayEngine.GENERIC -> if (data.bootstrapping) "Auto" else ""
         }

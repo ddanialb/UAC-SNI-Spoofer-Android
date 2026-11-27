@@ -39,6 +39,12 @@ class FoxyH2Session(
     private val proxySettings: UpstreamProxySettings? = null,
     private val avoidAddress: InetAddress? = null,
     private val vpnService: VpnService? = null,
+    /** How the TLS ClientHello is fragmented on the wire (DPI evasion). */
+    private val helloSplitMode: HelloSplitMode = HelloSplitMode.SNI,
+    /** Prefer IPv4 addresses when the edge resolves to both families. */
+    private val preferIpv4: Boolean = true,
+    /** Send PING frames so a silently-dead edge is detected. */
+    private val keepAliveEnabled: Boolean = true,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
@@ -59,6 +65,8 @@ class FoxyH2Session(
     @Volatile private var proxyPassToken = ""
     private val pingsOutstanding = AtomicInteger(0)
     private val drainNotified = AtomicBoolean(false)
+    /** Completed as soon as the edge sends its HTTP/2 SETTINGS frame. */
+    private val serverSettings = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     @Volatile private var socket: Socket? = null
     @Volatile private var sslSocket: SSLSocket? = null
@@ -89,49 +97,108 @@ class FoxyH2Session(
     }
 
     suspend fun connect() = withContext(Dispatchers.IO) {
-        AppLogRepository.info(LogSource.APP, "Foxy: connecting H2 tunnel to $edgeHost:$edgePort")
-        val sock = Socket()
-        sock.tcpNoDelay = true
-        sock.soTimeout = 15_000
-        try {
-            sock.keepAlive = true
-        } catch (_: Exception) {
-        }
+        AppLogRepository.info(
+            LogSource.APP,
+            "Foxy: connecting H2 tunnel to $edgeHost:$edgePort (hello split=${helloSplitMode.name.lowercase()})",
+        )
+        val raw = Socket()
+        raw.tcpNoDelay = true
+        raw.soTimeout = HANDSHAKE_TIMEOUT_MS
+        runCatching { raw.keepAlive = true }
         if (proxySettings?.enabled == true && proxySettings.host.isNotEmpty()) {
-            connectViaProxy(sock, proxySettings, edgeHost, edgePort)
+            connectViaProxy(raw, proxySettings, edgeHost, edgePort)
         } else {
-            val addresses = FoxyNetwork.resolveHostAddresses(edgeHost)
-            var ordered = if (addresses.isNotEmpty()) addresses else arrayOf(InetAddress.getByName(edgeHost))
-            if (avoidAddress != null && ordered.size > 1) {
-                ordered = ordered.sortedWith(compareBy { if (it == avoidAddress) 1 else 0 }).toTypedArray()
-            }
-            // Protect before connect so the edge dial bypasses the TUN.
-            if (vpnService != null && com.uacspoofer.mobile.vpn.SocketProtectGate.isEnabled(vpnService)) {
-                runCatching { vpnService.protect(sock) }
-            }
-            sock.connect(InetSocketAddress(ordered[0], edgePort), 15_000)
+            connectDirect(raw)
         }
-        socket = sock
-        // Use default trust manager (system CAs) — do not use the permissive one above.
+        socket = raw
+
+        // Wrap so the ClientHello leaves in several TCP segments (SNI hiding).
+        val transport: Socket = if (helloSplitMode == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, helloSplitMode)
         val defaultFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
-        val ssl = defaultFactory.createSocket(sock, edgeHost, edgePort, true) as SSLSocket
+        val ssl = defaultFactory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
         ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
         setAlpn(ssl, arrayOf("h2"))
         ssl.startHandshake()
+
         val negotiated = getAlpn(ssl)
         if (negotiated != "h2") {
-            AppLogRepository.warning(LogSource.APP, "Foxy: edge negotiated ALPN '$negotiated' instead of h2; sending preface anyway")
+            // Fastly's plain CDN endpoint answers on some ports with a valid certificate for a
+            // different hostname and ALPN "null": treating that as a session made the app report
+            // CONNECTED and drop the tunnel a heartbeat later.
+            ssl.close()
+            raw.close()
+            throw IOException(
+                "edge $edgeHost:$edgePort did not negotiate HTTP/2 (ALPN=${negotiated ?: "none"}); this port is not a Foxy edge",
+            )
+        }
+        if (!verifyHostname(ssl)) {
+            ssl.close()
+            raw.close()
+            throw IOException("edge certificate is not valid for $edgeHost (possible interception)")
         }
         sslSocket = ssl
-        val out = HelloSplitOutputStream(ssl.outputStream, HelloSplitMode.SNI)
+        ssl.soTimeout = READ_IDLE_TIMEOUT_MS
+
+        val out = ssl.outputStream
         out.write(H2_PREFACE)
         out.flush()
         writeFrame(4, 0, 0, byteArrayOf(0, 2, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 5, 0, 4, 0, 0))
-        writeFrame(8, 0, 0, byteArrayOf(0, 0xFE.toByte(), 0, 0))
+        writeFrame(8, 0, 0, byteArrayOf(0, 0, 0xFE.toByte(), 0, 0))
         readerJob = scope.launch { readerLoop() }
-        keepAliveJob = scope.launch { keepAliveLoop() }
+        val ready = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS.toLong()) { serverSettings.await() } != null
+        if (!ready) {
+            dispose()
+            throw IOException("edge $edgeHost:$edgePort accepted TLS but never answered the HTTP/2 handshake")
+        }
+        keepAliveJob = if (keepAliveEnabled) scope.launch { keepAliveLoop() } else null
         AppLogRepository.info(LogSource.APP, "Foxy: H2 tunnel session established with $edgeHost:$edgePort")
     }
+
+    /**
+     * Dials the edge directly, preferring IPv4 and trying every resolved address. Creating an
+     * IPv6 socket and connecting it to an IPv4-only network is what produced
+     * `connect failed: ENETUNREACH` on Iranian carriers (the socket was bound to `::`).
+     */
+    private suspend fun connectDirect(raw: Socket) {
+        val resolved = runCatching { FoxyNetwork.resolveHostAddresses(edgeHost).toList() }.getOrDefault(emptyList())
+            .ifEmpty {
+                runCatching { InetAddress.getAllByName(edgeHost).toList() }.getOrDefault(emptyList())
+            }
+        if (resolved.isEmpty()) throw IOException("cannot resolve edge host $edgeHost")
+        val ordered = resolved.sortedWith(
+            compareBy(
+                { if (preferIpv4 && it is java.net.Inet4Address) 0 else 1 },
+                { if (it == avoidAddress) 1 else 0 },
+            ),
+        )
+        val service = vpnService
+        if (service != null && com.uacspoofer.mobile.vpn.SocketProtectGate.isEnabled(service)) {
+            runCatching { service.protect(raw) }
+        }
+        var lastError: Exception? = null
+        for (address in ordered.take(MAX_ADDRESS_ATTEMPTS)) {
+            try {
+                raw.connect(java.net.InetSocketAddress(address, edgePort), ADDRESS_CONNECT_TIMEOUT_MS)
+                if (address != ordered.first()) {
+                    AppLogRepository.info(LogSource.APP, "Foxy: edge $edgeHost:$edgePort reached via ${address.hostAddress}")
+                }
+                return
+            } catch (e: Exception) {
+                lastError = e
+                AppLogRepository.debug(
+                    LogSource.APP,
+                    "Foxy: edge $edgeHost:$edgePort address ${address.hostAddress} failed: ${e.message}",
+                )
+                runCatching { raw.close() }
+            }
+        }
+        throw lastError ?: IOException("cannot reach edge $edgeHost:$edgePort")
+    }
+
+    private fun verifyHostname(ssl: SSLSocket): Boolean = runCatching {
+        val verifier = javax.net.ssl.HttpsURLConnection.getDefaultHostnameVerifier()
+        verifier.verify(edgeHost, ssl.session)
+    }.getOrDefault(false)
 
     private fun setAlpn(ssl: SSLSocket, protocols: Array<String>) {
         // API 29+: SSLSocket.setApplicationProtocols
@@ -415,6 +482,7 @@ class FoxyH2Session(
             }
             4 -> {
                 if ((flags and 1) == 0) {
+                    serverSettings.complete(Unit)
                     var i = 0
                     while (i + 6 <= payload.size) {
                         val settingId = ((payload[i].toInt() and 0xff) shl 8) or (payload[i + 1].toInt() and 0xff)
@@ -647,6 +715,10 @@ class FoxyH2Session(
     }
 
     companion object {
+        private const val HANDSHAKE_TIMEOUT_MS = 12_000
+        private const val READ_IDLE_TIMEOUT_MS = 0
+        private const val ADDRESS_CONNECT_TIMEOUT_MS = 6_000
+        private const val MAX_ADDRESS_ATTEMPTS = 3
         private val H2_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
         private const val KEEP_ALIVE_INTERVAL_MS = 15_000L
     }

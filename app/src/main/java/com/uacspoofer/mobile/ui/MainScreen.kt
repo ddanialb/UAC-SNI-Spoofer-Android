@@ -1074,6 +1074,8 @@ private fun SelectedProfileRow(
     val powSettings by powStore.settings.collectAsStateWithLifecycle()
     val directStore = remember(context) { DirectEngineStore.get(context) }
     val directSettings by directStore.settings.collectAsStateWithLifecycle()
+    val foxyStore = remember(context) { com.uacspoofer.mobile.engine.foxy.FoxyEngineStore.get(context) }
+    val foxySettings by foxyStore.settings.collectAsStateWithLifecycle()
     val isPersian = LocalHomePersian.current
     val neonRow = styleTokens()
     val nameLocale = if (isPersian) Locale("fa") else Locale.ENGLISH
@@ -1088,6 +1090,14 @@ private fun SelectedProfileRow(
         } else {
             PowRegions.name(powSettings.exitCountryCode, nameLocale)
         }
+        engineMode.isFoxy -> {
+            val code = foxySettings.serverCountry
+            if (code.isBlank() || code == "REC") {
+                homeText("Automatic", "خودکار")
+            } else {
+                CountryMetadata.resolve(code, null).countryName
+            }
+        }
         engineMode.isDirect -> when {
             !directSettings.wireGuardOverDirect -> homeText("Direct", "مستقیم")
             directSettings.exitCountryCode.isEmpty() -> homeText("Automatic", "خودکار")
@@ -1098,6 +1108,7 @@ private fun SelectedProfileRow(
     val selectionKey = when {
         engineMode.isTor -> "tor:${torSettings.exitCountryCode}"
         engineMode.isPow -> "pow:${powSettings.exitCountryCode}"
+        engineMode.isFoxy -> "foxy:${foxySettings.serverCountry}"
         engineMode.isDirect -> "direct:${directSettings.wireGuardOverDirect}:${directSettings.exitCountryCode}"
         else -> profile.id
     }

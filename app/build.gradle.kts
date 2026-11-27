@@ -33,8 +33,8 @@ android {
         applicationId = "com.uacspoofer.mobile"
         minSdk = 24
         targetSdk = 35
-        versionCode = 620
-        versionName = "2.1.7-foxy6"
+        versionCode = 700
+        versionName = "2.2.0-foxy7"
 
         buildConfigField("boolean", "TV_MODE", "false")
         buildConfigField("boolean", "GPS_MOCK_TEST", "false")

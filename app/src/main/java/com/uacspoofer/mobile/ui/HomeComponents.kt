@@ -74,6 +74,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -142,6 +143,9 @@ import com.uacspoofer.mobile.ui.theme.UacColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+
+/** Ignore collapse taps this soon after opening the steps panel. */
+private const val COLLAPSE_GRACE_MS = 450L
 
 @Composable
 internal fun HomeHeader(
@@ -1232,7 +1236,17 @@ internal fun PowConnectSheet(modifier: Modifier = Modifier) {
     val current = rows.firstOrNull { it.state == PowStepState.RUNNING }
         ?: rows.firstOrNull { it.state == PowStepState.FAILED }
         ?: rows.lastOrNull()
-    var dragDown by remember { mutableFloatStateOf(0f) }
+    // Guards against the tap that opened the panel also landing on the freshly composed
+    // collapse control: collapsing is ignored for a moment after opening.
+    var openedAt by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(panelMode) {
+        if (panelMode == ConnectPanelMode.OPEN) openedAt = System.currentTimeMillis()
+    }
+    val requestCollapse: () -> Unit = {
+        if (System.currentTimeMillis() - openedAt > COLLAPSE_GRACE_MS) {
+            panelStore.setSteps(ConnectPanelMode.COLLAPSED)
+        }
+    }
     CompositionLocalProvider(
         LocalLayoutDirection provides if (persian) LayoutDirection.Rtl else LayoutDirection.Ltr,
     ) {
@@ -1277,19 +1291,7 @@ internal fun PowConnectSheet(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onDragStart = { dragDown = 0f },
-                            onVerticalDrag = { _, dy -> if (dy > 0f) dragDown += dy },
-                            onDragEnd = {
-                                if (dragDown > 48.dp.toPx()) panelStore.setSteps(ConnectPanelMode.COLLAPSED)
-                                dragDown = 0f
-                            },
-                            onDragCancel = { dragDown = 0f },
-                        )
-                    },
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -1305,7 +1307,7 @@ internal fun PowConnectSheet(modifier: Modifier = Modifier) {
                 ConnectPanelCount(done, rows.size, paint.border)
                 Spacer(Modifier.weight(1f))
                 ConnectPanelActions(
-                    onCollapse = { panelStore.setSteps(ConnectPanelMode.COLLAPSED) },
+                    onCollapse = requestCollapse,
                     onClose = { panelStore.setSteps(ConnectPanelMode.CLOSED) },
                 )
             }
@@ -1317,7 +1319,7 @@ internal fun PowConnectSheet(modifier: Modifier = Modifier) {
             )
             Column(
                 modifier = Modifier
-                    .heightIn(max = 220.dp)
+                    .heightIn(max = 320.dp)
                     .verticalScroll(scroll),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {

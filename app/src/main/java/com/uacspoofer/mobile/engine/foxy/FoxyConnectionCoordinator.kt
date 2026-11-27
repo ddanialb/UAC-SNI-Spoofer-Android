@@ -289,12 +289,13 @@ class FoxyConnectionCoordinator(
         var session: FoxyH2Session? = null
         var chosen: ProxyCandidate? = null
         var lastError: Exception? = null
-        val attempts = minOf(ordered.size, MAX_EDGE_ATTEMPTS)
+        val settings = engineStore.snapshot()
+        val attempts = minOf(ordered.size, settings.edgeAttempts.coerceIn(1, MAX_EDGE_ATTEMPTS))
         for (i in 0 until attempts) {
             val candidate = ordered[i]
-            // Mozilla edges answer on 2499 and (through Fastly) on 443. Trying both, per
-            // edge, is what makes this survive networks that only allow outbound HTTPS.
-            for (port in candidatePorts(candidate.port)) {
+            // Only real Foxy edge ports are tried: Fastly's plain CDN answers on 443 with a
+            // certificate for a different host, which used to look like a successful session.
+            for (port in settings.edgePorts(candidate.port)) {
                 val authority = "${candidate.host}:$port"
                 try {
                     FoxyStatusStore.update(
@@ -306,9 +307,12 @@ class FoxyConnectionCoordinator(
                         val session = FoxyH2Session(
                             candidate.host,
                             port,
-                            engineStore.snapshot().upstreamProxy(),
+                            settings.upstreamProxy(),
                             avoidAddress,
                             service as? VpnService,
+                            settings.helloSplitMode(),
+                            settings.preferIpv4,
+                            settings.keepAlive,
                         )
                         session.connect()
                         session
@@ -332,7 +336,16 @@ class FoxyConnectionCoordinator(
         }
         if (session == null && ordered.none { it.host.equals("p.m1.fastly-masque.net", ignoreCase = true) }) {
             try {
-                val edge = FoxyH2Session("p.m1.fastly-masque.net", 2499, engineStore.snapshot().upstreamProxy(), avoidAddress, service as? VpnService)
+                val edge = FoxyH2Session(
+                    "p.m1.fastly-masque.net",
+                    2499,
+                    settings.upstreamProxy(),
+                    avoidAddress,
+                    service as? VpnService,
+                    settings.helloSplitMode(),
+                    settings.preferIpv4,
+                    settings.keepAlive,
+                )
                 edge.connect()
                 session = edge
                 chosen = ProxyCandidate("p.m1.fastly-masque.net", 2499, "REC", "Global Anycast", "REC")
@@ -677,10 +690,6 @@ class FoxyConnectionCoordinator(
         )
     }
 
-    /** Edge ports worth trying for one host, in order. */
-    private fun candidatePorts(preferred: Int): List<Int> =
-        if (preferred == 443) listOf(443, 2499) else listOf(preferred, 443)
-
     private fun guardian(): GuardianClient {
         val (proxy, fingerprint, auth) = currentProxy()
         val existing = guardian
@@ -700,7 +709,7 @@ class FoxyConnectionCoordinator(
     }
 
     companion object {
-        private const val MAX_EDGE_ATTEMPTS = 8
+        private const val MAX_EDGE_ATTEMPTS = 12
         private const val EDGE_ATTEMPT_TIMEOUT_MS = 12_000L
         private const val MAX_REMEMBERED_FAILED_EDGES = 8
         private const val FAILED_EDGE_COOLDOWN_MS = 10 * 60 * 1000L

@@ -5,6 +5,10 @@
 package com.uacspoofer.mobile.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +40,62 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.uacspoofer.mobile.engine.foxy.FoxyPhase
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 import com.uacspoofer.mobile.ui.theme.UacColors
+
+private val FlowRunning = Color(0xFFFFB547)
+
+/**
+ * Tor-style entry point: one compact row that opens the live path, with a status dot driven by
+ * the engine phase instead of a second, duplicated status card on the settings page.
+ */
+@Composable
+internal fun FoxyLiveFlowButton(accent: Color, onClick: () -> Unit) {
+    val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
+    val busy = status.phase == FoxyPhase.STARTING ||
+        status.phase == FoxyPhase.AUTH ||
+        status.phase == FoxyPhase.EDGE ||
+        status.phase == FoxyPhase.TUNNEL
+    val dot = when {
+        status.phase == FoxyPhase.IDLE -> UacColors.TextSecondary
+        busy -> FlowRunning
+        status.phase == FoxyPhase.CONNECTED -> UacColors.ConnectedGreen
+        else -> UacColors.ErrorRed
+    }
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brush.linearGradient(listOf(Color(0xE6142231), Color(0xD90B1724))), shape)
+            .border(1.dp, accent.copy(alpha = 0.28f), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(34.dp).background(accent.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.Route, null, tint = accent, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                homeText("Live status", "وضعیت زنده"),
+                color = UacColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = homeLocalizedFont(),
+            )
+            Text(
+                status.detail.ifBlank { homeText("Every step of the Foxy connect, live", "همهٔ مراحل اتصال فاکسی، زنده") },
+                color = UacColors.TextSecondary,
+                fontSize = 11.5.sp,
+                fontFamily = homeLocalizedFont(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(Modifier.size(8.dp).background(dot, CircleShape))
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Outlined.ChevronLeft, null, tint = UacColors.TextSecondary, modifier = Modifier.size(18.dp))
+    }
+}
 
 @Composable
 internal fun FoxyLiveFlowDialog(visible: Boolean, onDismissRequest: () -> Unit) {

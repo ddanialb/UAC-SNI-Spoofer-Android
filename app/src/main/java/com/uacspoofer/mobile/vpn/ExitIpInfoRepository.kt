@@ -110,6 +110,10 @@ class ExitIpInfoRepository private constructor(context: Context) {
                     }
                     MciConfig.LOCAL_SOCKS_ADDRESS to port
                 }
+                engine.isFoxy -> {
+                    val foxy = com.uacspoofer.mobile.engine.foxy.FoxyEngineStore.get(appContext).snapshot()
+                    MciConfig.LOCAL_SOCKS_ADDRESS to foxy.socksPort
+                }
                 else -> {
                     val settings = settingsStore.snapshot().validated()
                     settings.socksAddress to settings.socksPort
@@ -118,6 +122,7 @@ class ExitIpInfoRepository private constructor(context: Context) {
             val timeoutMs = if (engine.isTor || engine.isPow) TOR_LOOKUP_TIMEOUT_MS else LOOKUP_TIMEOUT_MS
             val via = when {
                 engine.isTor -> "Tor SOCKS"
+                engine.isFoxy -> "UAC Foxy SOCKS"
                 powWarpOnly -> "UAC PoW WARP SOCKS"
                 engine.isPow -> "UAC PoW SOCKS"
                 else -> "Xray SOCKS"

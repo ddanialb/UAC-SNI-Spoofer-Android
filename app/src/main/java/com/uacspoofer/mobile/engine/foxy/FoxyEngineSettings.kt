@@ -18,6 +18,14 @@ data class FoxyEngineSettings(
     val customProxyPassword: String = "",
     val dualSessionPool: Boolean = false,
     val socksPort: Int = 19_060,
+    /** Off / sni / firstByte / record — how the TLS ClientHello is fragmented. */
+    val helloSplit: String = HELLO_SPLIT_SNI,
+    val preferIpv4: Boolean = true,
+    val keepAlive: Boolean = true,
+    val autoReconnect: Boolean = true,
+    val edgeAttempts: Int = 6,
+    /** Extra edge ports to try after the primary one (comma separated, empty = none). */
+    val fallbackPorts: String = "",
 ) {
     fun validated(): FoxyEngineSettings = copy(
         serverCountry = serverCountry.trim().uppercase().ifBlank { "REC" },
@@ -28,7 +36,26 @@ data class FoxyEngineSettings(
         customProxyHost = customProxyHost.trim(),
         customProxyPort = if (customProxyPort in 1..65_535) customProxyPort else 1080,
         socksPort = if (socksPort in 1024..65_535) socksPort else 19_060,
+        helloSplit = normalizeHelloSplit(helloSplit),
+        edgeAttempts = edgeAttempts.coerceIn(1, 12),
+        fallbackPorts = fallbackPorts.split(',')
+            .mapNotNull { it.trim().toIntOrNull()?.takeIf { port -> port in 1..65_535 } }
+            .distinct()
+            .joinToString(","),
     )
+
+    fun helloSplitMode(): HelloSplitMode = when (helloSplit) {
+        HELLO_SPLIT_FIRST_BYTE -> HelloSplitMode.FIRST_BYTE
+        HELLO_SPLIT_RECORD -> HelloSplitMode.RECORD
+        HELLO_SPLIT_OFF -> HelloSplitMode.OFF
+        else -> HelloSplitMode.SNI
+    }
+
+    /** Edge ports for one host, primary first. */
+    fun edgePorts(primary: Int): List<Int> =
+        (listOf(primary) + fallbackPorts.split(',').mapNotNull { it.trim().toIntOrNull() })
+            .filter { it in 1..65_535 }
+            .distinct()
 
     fun upstreamProxy(): UpstreamProxySettings? {
         if (!customProxyEnabled || customProxyHost.isBlank()) return null
@@ -43,7 +70,19 @@ data class FoxyEngineSettings(
     }
 
     companion object {
+        const val HELLO_SPLIT_OFF = "off"
+        const val HELLO_SPLIT_SNI = "sni"
+        const val HELLO_SPLIT_FIRST_BYTE = "firstByte"
+        const val HELLO_SPLIT_RECORD = "record"
+
         val DEFAULT = FoxyEngineSettings()
+
+        fun normalizeHelloSplit(raw: String?): String = when (raw?.trim()?.lowercase()) {
+            HELLO_SPLIT_OFF, "none", "false" -> HELLO_SPLIT_OFF
+            HELLO_SPLIT_FIRST_BYTE, "first_byte", "first-byte", "firstbyte" -> HELLO_SPLIT_FIRST_BYTE
+            HELLO_SPLIT_RECORD -> HELLO_SPLIT_RECORD
+            else -> HELLO_SPLIT_SNI
+        }
 
         fun normalizeScheme(scheme: String?): String =
             if (scheme?.trim().equals("http", ignoreCase = true) || scheme?.trim().equals("https", ignoreCase = true)) "http" else "socks5"

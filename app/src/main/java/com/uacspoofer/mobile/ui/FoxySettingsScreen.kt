@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Route
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +31,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,6 +51,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.SettingsEthernet
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.TravelExplore
+import com.uacspoofer.mobile.engine.foxy.FoxyEngineSettings
 import com.uacspoofer.mobile.engine.foxy.FoxyAccount
 import com.uacspoofer.mobile.engine.foxy.FoxyAccountStore
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
@@ -62,13 +74,32 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
     val engineStore = remember(context) { FoxyEngineStore.get(context) }
     val engineSettings by engineStore.settings.collectAsStateWithLifecycle()
-    val selectedCountry = remember(engineSettings.serverCountry) {
-        val code = engineSettings.serverCountry
-        if (code.isBlank() || code == "REC") CountryMetadata.UNKNOWN else CountryMetadata.resolve(code, null)
-    }
     var loginVisible by remember { mutableStateOf(false) }
     var flowVisible by remember { mutableStateOf(false) }
-    var locationVisible by remember { mutableStateOf(false) }
+    val helloSplitChoices = listOf(
+        PowMenuChoice(
+            FoxyEngineSettings.HELLO_SPLIT_SNI,
+            homeText("Split at SNI (recommended)", "تقسیم روی SNI (پیشنهادی)"),
+            homeText("Three TCP segments around the server name.", "سه تکه، درست دور نام سرور."),
+        ),
+        PowMenuChoice(
+            FoxyEngineSettings.HELLO_SPLIT_FIRST_BYTE,
+            homeText("First byte only", "فقط بایت اول"),
+            homeText("Two segments; mildest splitting.", "دو تکه؛ ملایم‌ترین حالت."),
+        ),
+        PowMenuChoice(
+            FoxyEngineSettings.HELLO_SPLIT_RECORD,
+            homeText("Two TLS records", "دو رکورد TLS"),
+            homeText("Rebuilds the hello as two records.", "هلو را به دو رکورد تبدیل می‌کند."),
+        ),
+        PowMenuChoice(
+            FoxyEngineSettings.HELLO_SPLIT_OFF,
+            homeText("Off", "خاموش"),
+            homeText("Send the hello in one write.", "ارسال هلو در یک بسته."),
+        ),
+    )
+    val attemptChoices = listOf(2, 4, 6, 8, 12).map { n -> PowMenuChoice(n.toString(), homeLtr(n.toString())) }
+
 
     ToolPageScaffold(
         accent = accent,
@@ -84,84 +115,151 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
         },
     ) {
         item {
-            FoxyCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            homeText("Status", "وضعیت"),
-                            color = UacColors.TextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            status.detail.ifBlank { homeText("Idle", "بی‌کار") },
-                            color = UacColors.TextSecondary,
-                            fontSize = 11.5.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (status.exitIp.isNotBlank()) {
-                        Text(homeLtr(status.exitIp), color = accent, fontSize = 11.5.sp)
-                    }
-                }
-                if (status.phase.name != "IDLE") {
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { status.progressPercent / 100f },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp),
-                        color = accent,
-                        trackColor = PowBorder,
-                    )
-                }
-                Spacer(Modifier.height(3.dp))
-                TextButton(onClick = { flowVisible = true }) {
-                    Text(homeText("Show live path", "نمایش مسیر زنده"), fontSize = 12.sp, color = accent)
-                }
-            }
+            FoxyLiveFlowButton(accent = accent, onClick = { flowVisible = true })
         }
 
         item { FoxySectionTitle(homeText("Connection", "اتصال")) }
 
         item {
             FoxyCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        text = selectedCountry.flagEmoji ?: "🌐",
-                        fontSize = 22.sp,
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = homeText("Location", "لوکیشن"),
-                            color = UacColors.TextSecondary,
-                            fontSize = 12.sp,
+                PowPickerRow(
+                    icon = Icons.Outlined.Shield,
+                    label = homeText("TLS hello split", "تقسیم هلو TLS"),
+                    sheetTitle = homeText("TLS hello split", "تقسیم هلو TLS"),
+                    choices = helloSplitChoices,
+                    selectedId = engineSettings.helloSplit,
+                    accent = accent,
+                    subtitle = homeText(
+                        "Fragments the ClientHello so DPI cannot read the mozilla SNI",
+                        "هندشیک اولیه را تکه‌تکه می‌فرستد تا DPI نام دامنه را نبیند",
+                    ),
+                    onSelect = { id -> engineStore.save(engineSettings.copy(helloSplit = id)) },
+                )
+                PowRowDivider()
+                PowPickerRow(
+                    icon = Icons.Outlined.SettingsEthernet,
+                    label = homeText("Edge attempts", "تعداد تلاش سرور"),
+                    sheetTitle = homeText("How many edges to try", "چند سرور امتحان شود"),
+                    choices = attemptChoices,
+                    selectedId = engineSettings.edgeAttempts.toString(),
+                    accent = accent,
+                    subtitle = homeText(
+                        "More attempts survive flaky carriers",
+                        "تلاش بیشتر یعنی شانس بالاتر روی شبکه‌های شلوغ",
+                    ),
+                    onSelect = { id ->
+                        engineStore.save(engineSettings.copy(edgeAttempts = id.toIntOrNull() ?: 6))
+                    },
+                )
+                PowRowDivider()
+                PowSwitchRow(
+                    icon = Icons.Outlined.TravelExplore,
+                    title = homeText("Prefer IPv4", "اولویت IPv4"),
+                    subtitle = homeText(
+                        "Avoids ENETUNREACH on IPv4-only mobile networks",
+                        "جلوگیری از خطای ENETUNREACH روی شبکه‌های فقط IPv4",
+                    ),
+                    checked = engineSettings.preferIpv4,
+                    accent = accent,
+                    onCheckedChange = { engineStore.save(engineSettings.copy(preferIpv4 = it)) },
+                )
+                PowRowDivider()
+                PowSwitchRow(
+                    icon = Icons.Outlined.Favorite,
+                    title = homeText("Keep-alive PING", "پینگ نگه‌دارنده"),
+                    subtitle = homeText(
+                        "Detects a silently dead edge in 30 seconds",
+                        "سرور مرده را در ۳۰ ثانیه تشخیص می‌دهد",
+                    ),
+                    checked = engineSettings.keepAlive,
+                    accent = accent,
+                    onCheckedChange = { engineStore.save(engineSettings.copy(keepAlive = it)) },
+                )
+                PowRowDivider()
+                PowSwitchRow(
+                    icon = Icons.Outlined.Bolt,
+                    title = homeText("Auto reconnect", "اتصال خودکار مجدد"),
+                    subtitle = homeText(
+                        "Reconnects when the edge drops the tunnel",
+                        "اگر تونل قطع شد خودش دوباره وصل می‌کند",
+                    ),
+                    checked = engineSettings.autoReconnect,
+                    accent = accent,
+                    onCheckedChange = { engineStore.save(engineSettings.copy(autoReconnect = it)) },
+                )
+            }
+        }
+
+        item { FoxySectionTitle(homeText("Advanced", "پیشرفته")) }
+
+        item {
+            FoxyCard {
+                PowSwitchRow(
+                    icon = Icons.Outlined.Hub,
+                    title = homeText("Upstream proxy", "پروکسی بالادست"),
+                    subtitle = homeText(
+                        "Dial the edge through your own SOCKS/HTTP proxy",
+                        "اتصال به سرور از طریق پروکسی خودت (SOCKS یا HTTP)",
+                    ),
+                    checked = engineSettings.customProxyEnabled,
+                    accent = accent,
+                    onCheckedChange = { on ->
+                        engineStore.save(engineSettings.copy(customProxyEnabled = on))
+                    },
+                )
+                if (engineSettings.customProxyEnabled) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = PowPad, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(PowGap),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FoxyTextField(
+                            value = engineSettings.customProxyHost,
+                            onValueChange = { engineStore.save(engineSettings.copy(customProxyHost = it)) },
+                            hint = homeText("Proxy host", "هاست پروکسی"),
+                            modifier = Modifier.weight(1f),
                         )
-                        Text(
-                            text = if (selectedCountry.isKnown) {
-                                homeText(selectedCountry.countryName, selectedCountry.countryName)
-                            } else {
-                                homeText("Automatic (fastest edge)", "خودکار (نزدیک‌ترین سرور)")
+                        FoxyTextField(
+                            value = if (engineSettings.customProxyPort == 0) "" else engineSettings.customProxyPort.toString(),
+                            onValueChange = { raw ->
+                                engineStore.save(
+                                    engineSettings.copy(customProxyPort = FoxyEngineSettings.parsePortOrDefault(raw)),
+                                )
                             },
-                            color = UacColors.TextPrimary,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    TextButton(onClick = { locationVisible = true }) {
-                        Text(
-                            homeText("Change", "تغییر"),
-                            color = accent,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            hint = homeText("Port", "پورت"),
+                            modifier = Modifier.width(96.dp),
+                            numeric = true,
                         )
                     }
                 }
+                PowRowDivider()
+                PowSwitchRow(
+                    icon = Icons.Outlined.Layers,
+                    title = homeText("Session pool", "استخر نشست"),
+                    subtitle = homeText(
+                        "Keeps a second edge warm so a drop is invisible",
+                        "یک سرور دوم آماده نگه می‌دارد تا قطعی حس نشود",
+                    ),
+                    checked = engineSettings.dualSessionPool,
+                    accent = accent,
+                    onCheckedChange = { engineStore.save(engineSettings.copy(dualSessionPool = it)) },
+                )
+                PowRowDivider()
+                PowPickerRow(
+                    icon = Icons.Outlined.SettingsEthernet,
+                    label = homeText("Local SOCKS port", "پورت SOCKS محلی"),
+                    sheetTitle = homeText("Local SOCKS port", "پورت SOCKS محلی"),
+                    choices = listOf(19_060, 19_061, 10_809, 7_890).map { n ->
+                        PowMenuChoice(n.toString(), homeLtr(n.toString()))
+                    },
+                    selectedId = engineSettings.socksPort.toString(),
+                    accent = accent,
+                    subtitle = homeText(
+                        "Where apps and LAN share reach the tunnel",
+                        "جایی که برنامه‌ها و اشتراک LAN به تونل می‌رسند",
+                    ),
+                    onSelect = { id -> engineStore.save(engineSettings.copy(socksPort = id.toIntOrNull() ?: 19_060)) },
+                )
             }
         }
 
@@ -205,18 +303,6 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
         }
 
         item { Spacer(Modifier.height(24.dp)) }
-    }
-
-    if (locationVisible) {
-        HomeFoxyCountryDialog(
-            visible = true,
-            connected = status.phase == FoxyPhase.CONNECTED ||
-                status.phase == FoxyPhase.STARTING ||
-                status.phase == FoxyPhase.AUTH ||
-                status.phase == FoxyPhase.EDGE ||
-                status.phase == FoxyPhase.TUNNEL,
-            onDismissRequest = { locationVisible = false },
-        )
     }
 
     if (loginVisible) {
@@ -329,4 +415,32 @@ private fun FoxyAccountRow(
             }
         }
     }
+}
+
+@Composable
+private fun FoxyTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    hint: String,
+    modifier: Modifier = Modifier,
+    numeric: Boolean = false,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        singleLine = true,
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = UacColors.TextPrimary),
+        placeholder = {
+            Text(hint, color = UacColors.TextSecondary, fontSize = 11.5.sp)
+        },
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = if (numeric) androidx.compose.ui.text.input.KeyboardType.Number else androidx.compose.ui.text.input.KeyboardType.Text,
+        ),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = UacColors.DisconnectedBlue,
+            unfocusedBorderColor = PowBorder,
+            cursorColor = UacColors.DisconnectedBlue,
+        ),
+    )
 }

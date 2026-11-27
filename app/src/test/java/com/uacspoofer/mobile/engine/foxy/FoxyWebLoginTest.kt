@@ -16,8 +16,9 @@ class FoxyWebLoginTest {
     @Test
     fun `pkce challenge matches the RFC 7636 test vector`() {
         val verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        // Mozilla's clients keep the trailing '=' , so we do too.
         assertEquals(
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=",
             FoxyWebLogin.challengeFor(verifier),
         )
     }
@@ -27,7 +28,9 @@ class FoxyWebLoginTest {
         val pkce = FoxyWebLogin.newPkce()
         assertEquals(64, pkce.verifier.length)
         assertTrue(pkce.verifier.all { it.isLetterOrDigit() || it in "-._~" })
-        assertFalse(pkce.challenge.any { it == '+' || it == '/' || it == '=' })
+        // url-safe alphabet + padding, like Mozilla's client
+        assertFalse(pkce.challenge.any { it == '+' || it == '/' })
+        assertTrue(pkce.challenge.trimEnd('=').all { it.isLetterOrDigit() || it == '-' || it == '_' })
         assertNotEquals(pkce.verifier, pkce.challenge)
     }
 
@@ -65,6 +68,26 @@ class FoxyWebLoginTest {
         val url = "https://vpn.mozilla.org/vpn/client/login/success?code=deadbeef"
         assertTrue(FoxyWebLogin.isLoginCallback(url))
         assertEquals("deadbeef", FoxyWebLogin.extractAuthCode(url))
+    }
+
+    @Test
+    fun `the fxa oauth hop before the deep link is recognised`() {
+        // Guardian sends the browser here first; the code is the same one the deep link carries.
+        val url = "https://vpn.mozilla.org/oauth/success?code=abc123&state=pkce-42"
+        assertTrue(FoxyWebLogin.isLoginCallback(url))
+        assertEquals("abc123", FoxyWebLogin.extractAuthCode(url))
+    }
+
+    @Test
+    fun `code in the fragment is found`() {
+        val url = "mozilla-vpn://login/success#code=ff00ff"
+        assertEquals("ff00ff", FoxyWebLogin.extractAuthCode(url))
+    }
+
+    @Test
+    fun `success pages without a code do not count as a callback`() {
+        assertFalse(FoxyWebLogin.isLoginCallback("https://vpn.mozilla.org/oauth/success"))
+        assertFalse(FoxyWebLogin.isLoginCallback("https://vpn.mozilla.org/oauth/error?code=abc"))
     }
 
     @Test

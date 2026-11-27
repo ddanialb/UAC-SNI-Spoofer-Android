@@ -14,6 +14,8 @@
  */
 package com.uacspoofer.mobile.engine.foxy
 
+import com.uacspoofer.mobile.logging.AppLogRepository
+import com.uacspoofer.mobile.logging.LogSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -97,7 +99,16 @@ object FoxyWebLogin {
                     (uri.path.isNullOrEmpty() || uri.path == DEEP_LINK_PATH)
             } else {
                 val path = uri.path ?: return false
-                path.endsWith("/vpn/client/login/success") || path.endsWith("/login/success")
+                val host = uri.host.orEmpty()
+                when {
+                    path.endsWith("/vpn/client/login/success") -> true
+                    path.endsWith("/login/success") -> true
+                    // Guardian bounces the browser through https://vpn.mozilla.org/oauth/success
+                    // before handing the code to the app; either hop carries the same code.
+                    path.endsWith("/oauth/success") -> extractAuthCode(rawUrl) != null
+                    host.endsWith("mozilla.org") && path.endsWith("/success") -> extractAuthCode(rawUrl) != null
+                    else -> false
+                }
             }
         } catch (_: Exception) {
             rawUrl.startsWith("$DEEP_LINK_SCHEME://$DEEP_LINK_HOST")
@@ -108,12 +119,20 @@ object FoxyWebLogin {
     fun extractAuthCode(rawUrl: String?): String? {
         if (rawUrl.isNullOrBlank()) return null
         val query = rawUrl.substringAfter('?', "").substringBefore('#')
-        if (query.isEmpty()) return null
+        val fragment = if ('#' in rawUrl) rawUrl.substringAfter('#') else ""
+        for (candidate in listOf(query, fragment)) {
+            if (candidate.isEmpty()) continue
+            extractParam(candidate, "code")?.let { return it }
+        }
+        return null
+    }
+
+    private fun extractParam(query: String, name: String): String? {
         for (pair in query.split('&')) {
             val idx = pair.indexOf('=')
             if (idx <= 0) continue
             val key = pair.substring(0, idx)
-            if (key == "code") {
+            if (key == name) {
                 return percentDecode(pair.substring(idx + 1)).takeIf { it.isNotBlank() }
             }
         }
@@ -125,6 +144,7 @@ object FoxyWebLogin {
      * account with the profile/quota Guardian reports.
      */
     suspend fun signIn(code: String, verifier: String): FoxyWebLoginResult = withContext(Dispatchers.IO) {
+        AppLogRepository.info(LogSource.APP, "Foxy: exchanging Mozilla authorisation code (\${code.take(6)}…, ${code.length} chars)")
         try {
             val payload = JSONObject()
                 .put("code", code)
@@ -132,10 +152,9 @@ object FoxyWebLogin {
                 .toString()
             val (status, body) = postJson(VERIFY_PATH, payload)
             if (status !in 200..299) {
-                return@withContext FoxyWebLoginResult(
-                    success = false,
-                    errorMessage = describeError(body, status, "Sign-in was rejected by Mozilla Guardian."),
-                )
+                val message = describeError(body, status, "Sign-in was rejected by Mozilla Guardian.")
+                AppLogRepository.warning(LogSource.APP, "Foxy: /login/verify failed — HTTP $status — ${body.take(240)}")
+                return@withContext FoxyWebLoginResult(success = false, errorMessage = message)
             }
             val doc = JSONObject(body.ifBlank { "{}" })
             val token = doc.optString("token", "")
@@ -155,9 +174,14 @@ object FoxyWebLogin {
                 tokenExpiryEpochSeconds = GuardianClient.extractJwtExpiry(token)
                     ?: (System.currentTimeMillis() / 1000 + DEFAULT_TOKEN_LIFETIME_SECONDS),
             )
+            AppLogRepository.success(
+                LogSource.APP,
+                "Foxy: Mozilla sign-in OK for ${account.email.ifBlank { "(no email in response)" }}; token valid ${account.tokenExpiryEpochSeconds}s epoch",
+            )
             enrichFromGuardian(account)
             FoxyWebLoginResult(success = true, account = account)
         } catch (e: Exception) {
+            AppLogRepository.error(LogSource.APP, "Foxy: sign-in threw ${e.javaClass.simpleName}: ${e.message}")
             FoxyWebLoginResult(success = false, errorMessage = e.message ?: "Sign-in failed.")
         }
     }
@@ -249,10 +273,13 @@ object FoxyWebLogin {
     }
 
     /**
-     * base64url without padding. Hand-rolled on purpose: android.util.Base64 is not
-     * available in JVM unit tests and java.util.Base64 needs API 26 while minSdk is 24.
+     * base64url, hand-rolled on purpose: android.util.Base64 is unavailable in JVM unit
+     * tests and java.util.Base64 needs API 26 while minSdk is 24.
+     *
+     * Padding is kept because Mozilla's own Android client sends the padded form and
+     * Guardian compares the challenge string it stored when the login page was opened.
      */
-    internal fun base64Url(bytes: ByteArray): String {
+    internal fun base64Url(bytes: ByteArray, padded: Boolean = true): String {
         val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
         val sb = StringBuilder((bytes.size * 4 + 2) / 3)
         var i = 0
@@ -278,6 +305,9 @@ object FoxyWebLogin {
                 sb.append(alphabet[(n ushr 12) and 0x3F])
                 sb.append(alphabet[(n ushr 6) and 0x3F])
             }
+        }
+        if (padded) {
+            while (sb.length % 4 != 0) sb.append('=')
         }
         return sb.toString()
     }

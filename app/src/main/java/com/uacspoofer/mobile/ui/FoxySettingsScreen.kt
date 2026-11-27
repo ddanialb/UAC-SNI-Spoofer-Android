@@ -66,8 +66,8 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             PowCompactHeader(
                 accent = accent,
                 onBack = onBack,
-                title = homeText("Foxy", "Foxy"),
-                subtitle = homeText("Firefox account", "حساب فایرفاکس"),
+                title = homeText("UAC Foxy", "UAC Foxy"),
+                subtitle = homeText("Firefox VPN", "وی‌پی‌ان فایرفاکس"),
                 icon = Icons.Outlined.Route,
             )
         },
@@ -151,30 +151,6 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             }
         }
 
-        item {
-            FoxyCard {
-                Text(
-                    homeText("How this works", "چطور کار می‌کند"),
-                    color = UacColors.TextPrimary,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    homeText(
-                        "The Mozilla sign-in page opens inside the app — Google/Apple sign-in works there too. " +
-                            "We only keep the session token Mozilla hands back, never your password. " +
-                            "Location is chosen from the home screen.",
-                        "صفحهٔ ورود موزیلا داخل خود برنامه باز می‌شود — ورود با گوگل و اپل هم همان‌جا کار می‌کند. " +
-                            "فقط توکن نشستی که موزیلا برمی‌گرداند ذخیره می‌شود، نه رمزت. " +
-                            "انتخاب موقعیت از صفحهٔ اصلی انجام می‌شود.",
-                    ),
-                    color = UacColors.TextSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = PowHintLine,
-                )
-            }
-        }
         item { Spacer(Modifier.height(24.dp)) }
     }
 

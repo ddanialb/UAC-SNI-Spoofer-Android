@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -153,25 +152,6 @@ internal fun FoxyWebLoginDialog(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Lock,
-                            contentDescription = null,
-                            tint = UacColors.TextSecondary,
-                            modifier = Modifier.size(11.dp),
-                        )
-                        Spacer(Modifier.size(4.dp))
-                        Text(
-                            homeText(
-                                "Secure page hosted by Mozilla",
-                                "صفحهٔ امن موزیلا داخل برنامه",
-                            ),
-                            color = UacColors.TextSecondary,
-                            fontSize = 10.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
             }
 

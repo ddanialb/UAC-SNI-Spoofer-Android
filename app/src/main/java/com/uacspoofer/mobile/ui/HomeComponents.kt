@@ -294,6 +294,7 @@ internal fun AppTitle(compact: Boolean, accent: Color) {
                 engineMode.isTor -> "UAC TOR BRIDGE"
                 engineMode.isPow -> "UAC PoW"
                 engineMode.isDirect -> "UAC DIRECT"
+                engineMode.isFoxy -> "UAC FOXY"
                 else -> "UAC SNI SPOOFER"
             },
             fontSize = if (neonTitle != null) neonSp(compact, 23f, 20f, neonTitle.titleSize) else if (compact) 20.sp else 23.sp,

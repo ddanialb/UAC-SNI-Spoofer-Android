@@ -412,6 +412,7 @@ fun MainScreen(
                 DrawerDestination.CONFIGS -> when {
                     engineMode.isTor -> TorCountryScreen(onMenuClick = openDrawer)
                     engineMode.isPow -> PowCountryScreen(onMenuClick = openDrawer)
+                    engineMode.isFoxy -> FoxyCountryScreen(onMenuClick = openDrawer)
                     else -> ConfigsScreen(
                         onMenuClick = openDrawer,
                         connectionState = state,

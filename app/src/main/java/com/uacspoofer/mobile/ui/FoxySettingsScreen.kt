@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Route
@@ -43,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,9 +68,11 @@ import com.uacspoofer.mobile.engine.foxy.FoxyAccount
 import com.uacspoofer.mobile.engine.foxy.FoxyAccountStore
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 import com.uacspoofer.mobile.engine.foxy.FoxyEngineStore
+import com.uacspoofer.mobile.engine.foxy.FoxyQuota
 import com.uacspoofer.mobile.engine.foxy.FoxyPhase
 import com.uacspoofer.mobile.profiles.CountryMetadata
 import com.uacspoofer.mobile.ui.theme.UacColors
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun FoxySettingsScreen(onBack: () -> Unit) {
@@ -79,6 +84,8 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     val engineStore = remember(context) { FoxyEngineStore.get(context) }
     val engineSettings by engineStore.settings.collectAsStateWithLifecycle()
     var loginVisible by remember { mutableStateOf(false) }
+    var refreshingAccount by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     var flowVisible by remember { mutableStateOf(false) }
     val helloSplitChoices = listOf(
         PowMenuChoice(
@@ -266,8 +273,8 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                     FoxyCard {
                         Text(
                             homeText(
-                                "Sign in once to use the free Mozilla VPN quota (50 GB per account).",
-                                "یک بار وارد شو تا از سهمیهٔ رایگان Mozilla VPN استفاده کنی (۵۰ گیگ برای هر حساب).",
+                                "Sign in once to use your Mozilla VPN account. The remaining traffic is read from Mozilla and shown here as soon as it is reported.",
+                                "یک بار وارد شو تا از حساب Mozilla VPN خودت استفاده کنی. حجم باقی‌مانده از سرور موزیلا خوانده می‌شود و به‌محض دریافت همین‌جا نمایش داده می‌شود.",
                             ),
                             color = UacColors.TextSecondary,
                             fontSize = 11.5.sp,
@@ -281,7 +288,15 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                                 account = account,
                                 isActive = account.isActive,
                                 accent = accent,
+                                refreshing = refreshingAccount == account.id,
                                 onSetActive = { accountStore.setActive(account) },
+                                onRefresh = {
+                                    refreshingAccount = account.id
+                                    scope.launch {
+                                        FoxyQuota.refresh(context)
+                                        refreshingAccount = ""
+                                    }
+                                },
                                 onRemove = { accountStore.remove(account) },
                             )
                         }
@@ -301,7 +316,9 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                         } else {
                             homeText("Add another account", "افزودن حساب دیگر")
                         },
+                        style = homeLocalizedTextStyle(),
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
@@ -330,7 +347,9 @@ private fun LazyListScope.foxyAccountRows(
             account = account,
             isActive = account.isActive,
             accent = accent,
+            refreshing = false,
             onSetActive = { accountStore.setActive(account) },
+            onRefresh = {},
             onRemove = { accountStore.remove(account) },
         )
     }
@@ -399,8 +418,15 @@ private fun FoxySection(
                 modifier = Modifier.size(22.dp).rotate(chevron),
             )
         }
-        androidx.compose.animation.AnimatedVisibility(visible = expanded) {
-            Column(modifier = Modifier.fillMaxWidth(), content = content)
+        // Same transition POW uses: the body grows downwards from the header and collapses back
+        // up, so the direction matches the vertical list instead of sliding in from the side.
+        PowExpandBody(visible = expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(PowPad),
+                content = content,
+            )
         }
     }
 }
@@ -433,7 +459,9 @@ private fun FoxyAccountRow(
     account: FoxyAccount,
     isActive: Boolean,
     accent: Color,
+    refreshing: Boolean,
     onSetActive: () -> Unit,
+    onRefresh: () -> Unit,
     onRemove: () -> Unit,
 ) {
     FoxyCard {
@@ -459,8 +487,16 @@ private fun FoxyAccountRow(
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    homeLtr(account.quotaSummaryText),
-                    color = if (account.quotaRemainingPercentage < 10.0) UacColors.ErrorRed else UacColors.TextSecondary,
+                    if (account.hasQuotaData) {
+                        homeLtr(account.quotaSummaryText)
+                    } else {
+                        homeText("Traffic allowance not reported yet", "حجم باقی‌مانده هنوز از سرور نیامده")
+                    },
+                    color = when {
+                        !account.hasQuotaData -> UacColors.TextSecondary
+                        account.quotaRemainingPercentage < 10.0 -> UacColors.ErrorRed
+                        else -> UacColors.TextSecondary
+                    },
                     fontSize = 11.sp,
                 )
                 if (account.quotaErrorMessage.isNotBlank()) {
@@ -473,6 +509,14 @@ private fun FoxyAccountRow(
                 } else if (account.quotaResetDisplay.isNotBlank()) {
                     Text(account.quotaResetDisplay, color = UacColors.TextSecondary, fontSize = 10.sp)
                 }
+            }
+            IconButton(onClick = onRefresh, modifier = Modifier.size(30.dp)) {
+                Icon(
+                    if (refreshing) Icons.Outlined.Sync else Icons.Outlined.Refresh,
+                    contentDescription = homeText("Refresh traffic", "به‌روزرسانی حجم"),
+                    tint = accent,
+                    modifier = Modifier.size(15.dp),
+                )
             }
             if (!isActive) {
                 TextButton(onClick = onSetActive) {

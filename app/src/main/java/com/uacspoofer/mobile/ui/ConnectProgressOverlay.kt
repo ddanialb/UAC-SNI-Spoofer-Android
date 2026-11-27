@@ -1,5 +1,6 @@
 package com.uacspoofer.mobile.ui
 
+import com.uacspoofer.mobile.engine.foxy.FoxyPhase
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 
 import androidx.compose.animation.AnimatedContent
@@ -231,7 +232,19 @@ internal fun ConnectProgressOverlay(
                 val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
                 val steps = ConnectProgressModel.foxySteps(status.phase)
                 val focused = steps.getOrNull(ConnectProgressModel.focusIndex(steps))?.detail.orEmpty()
-                val detail = if (status.detail.isNotBlank()) status.detail else focused
+                val raw = if (status.detail.isNotBlank()) status.detail else focused
+                // Persian users see the stage in Persian; failures keep the technical message so
+                // the cause is never hidden behind a friendly translation.
+                val localized = FoxyStatusCopy.stage(status.phase, LocalHomePersian.current)
+                val detail = if (localized != null && mode != OverlayMode.FAILED) {
+                    if (status.phase == FoxyPhase.EDGE && status.edgeHost.isNotBlank()) {
+                        "$localized · ${status.edgeHost}"
+                    } else {
+                        localized
+                    }
+                } else {
+                    raw
+                }
                 OverlayData(steps, detail, 0L)
             }
             ConnectOverlayEngine.DIRECT -> {

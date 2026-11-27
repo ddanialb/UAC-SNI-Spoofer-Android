@@ -82,6 +82,61 @@ class FxaClient(
         }
     }
 
+    /**
+     * Finishes a sign-in that happened inside the in-app browser.
+     *
+     * The Firefox Accounts page hands the app a `sessionToken` (64 hex chars) over the
+     * WebChannel bridge; that token is exchanged for OAuth credentials with the same
+     * `fxa-credentials` grant the password login uses, so the engine keeps its refresh
+     * token and never needs the password. This mirrors what other Foxy clients do.
+     */
+    suspend fun completeBrowserLogin(sessionToken: String): FoxyAccount = withContext(Dispatchers.IO) {
+        val clean = sessionToken.trim().replace(Regex("[\\s\"]"), "").lowercase()
+        require(clean.length == 64 && clean.all { it in "0123456789abcdef" }) {
+            "Firefox returned an invalid session token."
+        }
+        val body = JSONObject()
+            .put("client_id", CLIENT_ID)
+            .put("grant_type", "fxa-credentials")
+            .put("scope", OAUTH_SCOPE)
+            .put("access_type", "offline")
+            .toString()
+        val doc = try {
+            fxaRequest("POST", "/oauth/token", clean, body)
+        } catch (e: Exception) {
+            if (isFastly406OrChallengeFailure(e)) exchangeSessionWithOAuthCode(clean) else throw e
+        }
+        val accessToken = doc.optString("access_token", "")
+        require(accessToken.isNotBlank()) { "Firefox did not return an access token." }
+        val refreshToken = doc.optString("refresh_token", "")
+        val expiresIn = doc.optLong("expires_in", 86_400L)
+        FoxyAccount(
+            email = fetchProfileEmail(accessToken),
+            sessionToken = clean,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            authMethod = FoxyAccount.AUTH_WEB,
+            tokenExpiryEpochSeconds = System.currentTimeMillis() / 1000 + expiresIn,
+        )
+    }
+
+    /** Email address for the freshly issued token; best effort. */
+    private fun fetchProfileEmail(accessToken: String): String = try {
+        val conn = open(URL(PROFILE_URL))
+        conn.setRequestProperty("User-Agent", FastlyChallengeSolver.SOLVER_USER_AGENT)
+        conn.setRequestProperty("Accept", "application/json")
+        conn.setRequestProperty("Authorization", "Bearer $accessToken")
+        val status = conn.responseCode
+        val text = readBody(conn)
+        if (status !in 200..299) {
+            ""
+        } else {
+            JSONObject(text).optString("email", "")
+        }
+    } catch (_: Exception) {
+        ""
+    }
+
     private suspend fun completeLogin(email: String, sessionToken: String): FoxyAccount {
         val body = JSONObject()
             .put("client_id", CLIENT_ID)
@@ -295,6 +350,7 @@ class FxaClient(
     companion object {
         private const val FXA_AUTH_SERVER = "https://api.accounts.firefox.com/v1"
         private const val FXA_OAUTH_TOKEN_URL = "https://oauth.accounts.firefox.com/v1/token"
+        private const val PROFILE_URL = "https://profile.accounts.firefox.com/v1/profile"
         private const val CLIENT_ID = "5882386c6d801776"
         private const val OAUTH_SCOPE = "profile https://identity.mozilla.com/apps/vpn"
         private const val FXA_ERRNO_INVALID_PARAMETER = 107

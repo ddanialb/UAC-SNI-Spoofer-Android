@@ -2,131 +2,105 @@ package com.uacspoofer.mobile.engine.foxy
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The in-app sign-in flow only has a few pieces we can pin down without talking to Mozilla:
- * PKCE generation, the login URL, and pulling the authorisation code out of the redirect.
+ * The sign-in bridge: Firefox Accounts hands us a sessionToken over WebChannel, we trade it
+ * for OAuth credentials. Everything testable without an account lives here.
  */
 class FoxyWebLoginTest {
 
+    private val token = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
+
     @Test
-    fun `pkce challenge matches the RFC 7636 test vector`() {
-        val verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-        // Mozilla's clients keep the trailing '=' , so we do too.
-        assertEquals(
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM=",
-            FoxyWebLogin.challengeFor(verifier),
+    fun `login page is the webchannel flavoured firefox accounts page`() {
+        val url = FoxyWebLogin.loginUrl()
+        assertTrue(url.startsWith("https://accounts.firefox.com/?"))
+        assertTrue(url.contains("context=fx_desktop_v3"))
+        assertTrue(url.contains("service=sync"))
+    }
+
+    @Test
+    fun `optional email is carried into the login page`() {
+        assertTrue(FoxyWebLogin.loginUrl("user@example.com").contains("email=user%40example.com"))
+    }
+
+    @Test
+    fun `browser user agent must look like firefox or the page stays silent`() {
+        assertTrue(FoxyWebLogin.BROWSER_USER_AGENT.contains("Firefox/"))
+        assertFalse(FoxyWebLogin.BROWSER_USER_AGENT.contains("wv"))
+    }
+
+    @Test
+    fun `session tokens are 64 hex characters`() {
+        assertTrue(FoxyWebLogin.isValidSessionToken(token))
+        assertTrue(FoxyWebLogin.isValidSessionToken("  ${token.uppercase()}  "))
+        assertFalse(FoxyWebLogin.isValidSessionToken(token.dropLast(1)))
+        assertFalse(FoxyWebLogin.isValidSessionToken("z".repeat(64)))
+        assertFalse(FoxyWebLogin.isValidSessionToken(null))
+    }
+
+    @Test
+    fun `fxaccounts login envelope yields the session token and email`() {
+        val payload = """
+            {"id":"account_updates","message":{"messageId":"42","command":"fxaccounts:login",
+            "data":{"sessionToken":"$token","email":"user@example.com","verified":true}}}
+        """.trimIndent()
+        val event = FoxyWebLogin.parseWebChannel(payload)
+        assertEquals("fxaccounts:login", event?.command)
+        assertEquals("42", event?.messageId)
+        assertEquals("account_updates", event?.channelId)
+        assertEquals(token, event?.sessionToken)
+        assertEquals("user@example.com", event?.email)
+    }
+
+    @Test
+    fun `oauth_login envelopes carry the token too`() {
+        val payload = """{"id":"account_updates","message":{"messageId":"7","command":"fxaccounts:oauth_login","data":{"sessionToken":"$token"}}}"""
+        assertEquals(token, FoxyWebLogin.parseWebChannel(payload)?.sessionToken)
+    }
+
+    @Test
+    fun `a bare token field is accepted and cleaned`() {
+        val payload = """{"message":{"command":"fxaccounts:login","data":{"token":"$token"}}}"""
+        assertEquals(token, FoxyWebLogin.parseWebChannel(payload)?.sessionToken)
+    }
+
+    @Test
+    fun `status and can_link messages parse without a token`() {
+        val status = FoxyWebLogin.parseWebChannel(
+            """{"id":"account_updates","message":{"messageId":"1","command":"fxaccounts:fxa_status","data":{}}}""",
         )
+        assertEquals("fxaccounts:fxa_status", status?.command)
+        assertEquals("", status?.sessionToken)
+        assertEquals("""{"capabilities":{},"signedInUser":null}""", FoxyWebLogin.statusReply())
+        assertEquals("""{"ok":true}""", FoxyWebLogin.canLinkAccountReply())
     }
 
     @Test
-    fun `generated pkce is url safe and long enough`() {
-        val pkce = FoxyWebLogin.newPkce()
-        assertEquals(64, pkce.verifier.length)
-        assertTrue(pkce.verifier.all { it.isLetterOrDigit() || it in "-._~" })
-        // url-safe alphabet + padding, like Mozilla's client
-        assertFalse(pkce.challenge.any { it == '+' || it == '/' })
-        assertTrue(pkce.challenge.trimEnd('=').all { it.isLetterOrDigit() || it == '-' || it == '_' })
-        assertNotEquals(pkce.verifier, pkce.challenge)
+    fun `junk payloads are ignored`() {
+        assertNull(FoxyWebLogin.parseWebChannel(null))
+        assertNull(FoxyWebLogin.parseWebChannel(""))
+        assertNull(FoxyWebLogin.parseWebChannel("not json"))
+        assertNull(FoxyWebLogin.parseWebChannel("""{"id":"x"}"""))
     }
 
     @Test
-    fun `each pkce is unique`() {
-        val a = FoxyWebLogin.newPkce()
-        val b = FoxyWebLogin.newPkce()
-        assertNotEquals(a.verifier, b.verifier)
+    fun `the injected hook relays webchannel traffic and can reply`() {
+        val hook = FoxyWebLogin.JS_HOOK
+        assertTrue(hook.contains("WebChannelMessageToChrome"))
+        assertTrue(hook.contains("WebChannelMessageToContent"))
+        assertTrue(hook.contains(FoxyWebLogin.JS_BRIDGE_NAME))
+        assertTrue(hook.contains("__foxyReply"))
     }
 
     @Test
-    fun `login url points at guardian android login with S256`() {
-        val url = FoxyWebLogin.loginUrl("abc-123")
-        assertTrue(url.startsWith("https://vpn.mozilla.org/api/v2/vpn/login/android?"))
-        assertTrue(url.contains("code_challenge=abc-123"))
-        assertTrue(url.contains("code_challenge_method=S256"))
-        assertTrue(url.contains("user_agent="))
-    }
-
-    @Test
-    fun `login url passes an optional email`() {
-        val url = FoxyWebLogin.loginUrl("abc", email = "user@example.com")
-        assertTrue(url.contains("email=user%40example.com"))
-    }
-
-    @Test
-    fun `deep link with a code is recognised`() {
-        val url = "mozilla-vpn://login/success?code=0123456789abcdef&state=xyz"
-        assertTrue(FoxyWebLogin.isLoginCallback(url))
-        assertEquals("0123456789abcdef", FoxyWebLogin.extractAuthCode(url))
-    }
-
-    @Test
-    fun `guardian https redirect is recognised too`() {
-        val url = "https://vpn.mozilla.org/vpn/client/login/success?code=deadbeef"
-        assertTrue(FoxyWebLogin.isLoginCallback(url))
-        assertEquals("deadbeef", FoxyWebLogin.extractAuthCode(url))
-    }
-
-    @Test
-    fun `the fxa oauth hop before the deep link is recognised`() {
-        // Guardian sends the browser here first; the code is the same one the deep link carries.
-        val url = "https://vpn.mozilla.org/oauth/success?code=abc123&state=pkce-42"
-        assertTrue(FoxyWebLogin.isLoginCallback(url))
-        assertEquals("abc123", FoxyWebLogin.extractAuthCode(url))
-    }
-
-    @Test
-    fun `code in the fragment is found`() {
-        val url = "mozilla-vpn://login/success#code=ff00ff"
-        assertEquals("ff00ff", FoxyWebLogin.extractAuthCode(url))
-    }
-
-    @Test
-    fun `success pages without a code do not count as a callback`() {
-        assertFalse(FoxyWebLogin.isLoginCallback("https://vpn.mozilla.org/oauth/success"))
-        assertFalse(FoxyWebLogin.isLoginCallback("https://vpn.mozilla.org/oauth/error?code=abc"))
-    }
-
-    @Test
-    fun `unrelated urls are not treated as a callback`() {
-        assertFalse(FoxyWebLogin.isLoginCallback("https://accounts.firefox.com/"))
-        assertFalse(FoxyWebLogin.isLoginCallback("mozilla-vpn://somethingelse/success?code=x"))
-        assertFalse(FoxyWebLogin.isLoginCallback(null))
-        assertNull(FoxyWebLogin.extractAuthCode("https://vpn.mozilla.org/api/v2/vpn/login/android"))
-    }
-
-    @Test
-    fun `code survives url encoding and extra parameters`() {
-        val url = "mozilla-vpn://login/success?state=abc&code=a%2Bb%2Fc%3D&other=1"
-        assertEquals("a+b/c=", FoxyWebLogin.extractAuthCode(url))
-    }
-
-    @Test
-    fun `web accounts are considered usable without a refresh token`() {
-        val account = FoxyAccount(
-            email = "user@example.com",
-            accessToken = "header.payload.signature",
-            refreshToken = "",
-        )
-        assertTrue(account.hasUsableCredentials)
-        assertFalse(account.canRefreshSilently)
-        assertTrue(account.isWebLogin)
-        assertEquals(FoxyAccount.AUTH_WEB, account.authMethod)
-    }
-
-    @Test
-    fun `legacy fxa accounts can refresh silently`() {
-        val account = FoxyAccount(
-            email = "old@example.com",
-            accessToken = "access",
-            refreshToken = "refresh",
-            authMethod = FoxyAccount.AUTH_LEGACY,
-        )
+    fun `accounts signed in through the browser can refresh silently`() {
+        val account = FoxyAccount(email = "u@e.com", accessToken = "access", refreshToken = "refresh")
         assertTrue(account.hasUsableCredentials)
         assertTrue(account.canRefreshSilently)
-        assertFalse(account.isWebLogin)
+        assertTrue(account.isWebLogin)
     }
 }

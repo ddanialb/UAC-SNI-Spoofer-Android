@@ -151,14 +151,6 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             }
         }
 
-        item {
-            Text(
-                homeLtr("Foxy build 4 · app ${com.uacspoofer.mobile.BuildConfig.VERSION_NAME}"),
-                color = UacColors.TextSecondary.copy(alpha = 0.6f),
-                fontSize = 10.sp,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-        }
         item { Spacer(Modifier.height(24.dp)) }
     }
 

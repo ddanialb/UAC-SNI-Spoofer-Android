@@ -55,6 +55,9 @@ class FoxyH2Session(
     /** Coalescing signal: kotlinx Semaphore(0) is illegal (it requires >= 1 permit). */
     private val sendWindowSignal = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     private var peerInitialWindowSize = 65535
+
+    @Volatile
+    private var peerMaxFrameSize = DEFAULT_MAX_FRAME_SIZE
     private var connSendWindow = 65535L
     private val nextStreamId = AtomicInteger(1)
     private val disposed = AtomicBoolean(false)
@@ -122,6 +125,7 @@ class FoxyH2Session(
         ssl.startHandshake()
 
         val negotiated = getAlpn(ssl)
+        AppLogRepository.debug(LogSource.APP, "Foxy: edge ALPN = ${negotiated ?: "none"}")
         if (negotiated != "h2") {
             // Fastly's plain CDN endpoint answers on some ports with a valid certificate for a
             // different hostname and ALPN "null": treating that as a session made the app report
@@ -144,7 +148,9 @@ class FoxyH2Session(
         out.write(H2_PREFACE)
         out.flush()
         writeFrame(4, 0, 0, byteArrayOf(0, 2, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 5, 0, 4, 0, 0))
-        writeFrame(8, 0, 0, byteArrayOf(0, 0, 0xFE.toByte(), 0, 0))
+        // WINDOW_UPDATE payload must be exactly 4 bytes; a 5th byte made the edge answer
+        // GOAWAY FRAME_SIZE_ERROR before a single stream could be opened.
+        writeFrame(8, 0, 0, encodeWindowUpdatePayload(INITIAL_CONNECTION_WINDOW))
         readerJob = scope.launch { readerLoop() }
         val ready = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS.toLong()) { serverSettings.await() } != null
         if (!ready) {
@@ -201,37 +207,66 @@ class FoxyH2Session(
         verifier.verify(edgeHost, ssl.session)
     }.getOrDefault(false)
 
+    /**
+     * ALPN must be real: the Fastly edge only speaks Foxy when "h2" is negotiated. Reflection on
+     * `ssl.javaClass` always failed (Conscrypt/JDK socket classes are not public), so ALPN was
+     * silently left unset and every handshake ended as `ALPN=none`.
+     */
+    /**
+     * ALPN is what makes the edge speak Foxy at all, and getting it switched on is fiddly:
+     * `SSLParameters.setApplicationProtocols` is silently ignored by Conscrypt (verified live:
+     * the negotiated protocol stayed null and every edge answered "not HTTP/2"), and Android's
+     * SSLSocket has no setApplicationProtocols() of its own. So every known route is applied:
+     * the Conscrypt socket method Android exposes, the Conscrypt helper (bundled and platform
+     * package names), and finally SSLParameters for non-Conscrypt stacks.
+     */
     private fun setAlpn(ssl: SSLSocket, protocols: Array<String>) {
-        // API 29+: SSLSocket.setApplicationProtocols
-        try {
-            val m = ssl.javaClass.getMethod("setApplicationProtocols", Array<String>::class.java)
-            m.invoke(ssl, protocols)
-            return
-        } catch (_: NoSuchMethodException) {
-        } catch (_: Exception) {
-        }
-        // API 24-28 Conscrypt fallback via reflection.
-        try {
+        var applied = false
+        // 1. Conscrypt socket method (what OkHttp uses on Android).
+        applied = runCatching {
             val m = ssl.javaClass.getMethod("setAlpnProtocols", Array<ByteArray>::class.java)
-            m.invoke(ssl, protocols.map { it.toByteArray(StandardCharsets.UTF_8) }.toTypedArray())
-        } catch (_: Exception) {
-            // ALPN unavailable; preface is still sent (Windows parity).
+            m.isAccessible = true
+            m.invoke(ssl, protocols.map { it.toByteArray(StandardCharsets.UTF_8) } as Any)
+            true
+        }.getOrDefault(false)
+        // 2/3. org.conscrypt.Conscrypt (bundled) and com.android.org.conscrypt.Conscrypt (platform).
+        for (className in CONSCRYPT_CLASS_NAMES) {
+            applied = applyConscryptAlpn(className, ssl, protocols) || applied
+        }
+        // 4. Plain SSLParameters.
+        if (!applied) {
+            runCatching {
+                val params = ssl.sslParameters
+                params.applicationProtocols = protocols
+                ssl.sslParameters = params
+            }
         }
     }
 
+    private fun applyConscryptAlpn(className: String, ssl: SSLSocket, protocols: Array<String>): Boolean =
+        runCatching {
+            val method = Class.forName(className).getMethod(
+                "setApplicationProtocols",
+                javax.net.ssl.SSLSocket::class.java,
+                Array<String>::class.java,
+            )
+            method.invoke(null, ssl, protocols)
+            true
+        }.getOrDefault(false)
+
     private fun getAlpn(ssl: SSLSocket): String? {
-        try {
-            val m = ssl.javaClass.getMethod("getApplicationProtocol")
-            return m.invoke(ssl) as? String
-        } catch (_: Exception) {
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                ssl.applicationProtocol?.let { return it }
+            }
         }
-        try {
-            val m = ssl.javaClass.getMethod("getAlpnProtocol")
+        runCatching {
+            val m = ssl.javaClass.getMethod("getAlpnSelectedProtocol")
+            m.isAccessible = true
             val bytes = m.invoke(ssl) as? ByteArray ?: return null
             return String(bytes, StandardCharsets.UTF_8)
-        } catch (_: Exception) {
-            return null
         }
+        return null
     }
 
     private suspend fun keepAliveLoop() {
@@ -268,7 +303,21 @@ class FoxyH2Session(
             val initialWindow = synchronized(windowLock) { peerInitialWindowSize }
             channel = FoxyH2Stream(streamId, this, initialWindow)
             activeStreams[streamId] = channel
-            writeFrameLocked(1, 4, streamId, HpackCodec.encodeConnectHeaders(authority, token))
+            val headerBlock = HpackCodec.encodeConnectHeaders(authority, token)
+            val maxFrame = peerMaxFrameSize
+            if (headerBlock.size <= maxFrame) {
+                writeFrameLocked(1, 4, streamId, headerBlock)
+            } else {
+                // HEADERS without END_HEADERS, followed by CONTINUATION frames.
+                writeFrameLocked(1, 1, streamId, headerBlock.copyOfRange(0, maxFrame))
+                var offset = maxFrame
+                while (offset < headerBlock.size) {
+                    val end = minOf(offset + maxFrame, headerBlock.size)
+                    val last = end == headerBlock.size
+                    writeFrameLocked(9, if (last) 4 else 0, streamId, headerBlock.copyOfRange(offset, end))
+                    offset = end
+                }
+            }
         }
         try {
             val status = withTimeoutOrNull(12_000) { channel.waitForStatus() }
@@ -326,6 +375,7 @@ class FoxyH2Session(
                     }
                 }
             }
+            chunkLen = minOf(chunkLen, peerMaxFrameSize)
             val isFinalChunk = (offset + chunkLen) >= data.size
             val flags = if (isFinalChunk && endStream) 1 else 0
             writeFrame(0, flags, streamId, data.copyOfRange(offset, offset + chunkLen))
@@ -491,6 +541,9 @@ class FoxyH2Session(
                             ((payload[i + 3].toInt() and 0xff).toLong() shl 16) or
                             ((payload[i + 4].toInt() and 0xff).toLong() shl 8) or
                             (payload[i + 5].toInt() and 0xff).toLong()
+                        if (settingId == 0x5 && value in 16_384L..16_777_215L) {
+                            peerMaxFrameSize = value.toInt()
+                        }
                         if (settingId == 0x4 && value <= Int.MAX_VALUE) {
                             val newInit = value.toInt()
                             synchronized(windowLock) {
@@ -722,6 +775,12 @@ class FoxyH2Session(
         private const val MAX_ADDRESS_ATTEMPTS = 3
         private val H2_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
         private const val KEEP_ALIVE_INTERVAL_MS = 15_000L
+        private const val INITIAL_CONNECTION_WINDOW = 4 * 1024 * 1024
+        private const val DEFAULT_MAX_FRAME_SIZE = 16_384
+        private val CONSCRYPT_CLASS_NAMES = listOf(
+            "org.conscrypt.Conscrypt",
+            "com.android.org.conscrypt.Conscrypt",
+        )
     }
 }
 

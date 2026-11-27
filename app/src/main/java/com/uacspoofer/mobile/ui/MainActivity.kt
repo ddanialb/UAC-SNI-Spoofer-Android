@@ -44,6 +44,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private val foxySignInRequestedState = androidx.compose.runtime.mutableStateOf(false)
+    private var foxySignInRequested: Boolean
+        get() = foxySignInRequestedState.value
+        set(value) { foxySignInRequestedState.value = value }
+
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -112,6 +117,15 @@ class MainActivity : ComponentActivity() {
                         onMinimize = { moveTaskToBack(true) },
                         onCloseApp = { closeAppFromBack(state) },
                     )
+                    if (foxySignInRequested) {
+                        com.uacspoofer.mobile.ui.FoxyWebLoginDialog(
+                            onDismiss = { foxySignInRequested = false },
+                            onSignedIn = { account ->
+                                foxySignInRequested = false
+                                if (account.hasUsableCredentials) beginConnect()
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -166,6 +180,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun beginConnect() {
+        // Foxy cannot do anything without a Firefox account, so ask for one right here instead of
+        // letting the service fail with "No usable Firefox account".
+        if (needsFoxySignIn()) {
+            foxySignInRequested = true
+            return
+        }
         if (!ConnectionStateStore.tryBeginConnect()) return
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -203,6 +223,14 @@ class MainActivity : ComponentActivity() {
         } catch (_: Throwable) {
             ConnectionStateStore.markError()
         }
+    }
+
+    /** True when the Foxy engine is selected and no usable Firefox account is stored. */
+    private fun needsFoxySignIn(): Boolean {
+        val engine = com.uacspoofer.mobile.engine.EngineModeStore.get(this).snapshot()
+        if (!engine.isFoxy) return false
+        val accounts = com.uacspoofer.mobile.engine.foxy.FoxyAccountStore.get(this).snapshot()
+        return accounts.isEmpty() || accounts.none { it.hasUsableCredentials }
     }
 
     private fun startVpnService() {

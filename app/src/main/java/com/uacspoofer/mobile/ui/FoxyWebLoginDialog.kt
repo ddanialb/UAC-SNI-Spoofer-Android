@@ -78,7 +78,8 @@ internal fun FoxyWebLoginDialog(
     val persian = LocalHomePersian.current
     val accountStore = remember(context) { FoxyAccountStore.get(context) }
     val scope = rememberCoroutineScope()
-    val loginUrl = remember { FoxyWebLogin.loginUrl() }
+    var signUp by remember { mutableStateOf(false) }
+    val loginUrl = remember(signUp) { FoxyWebLogin.loginUrl(signUp = signUp) }
 
     var progress by remember { mutableFloatStateOf(0f) }
     var busy by remember { mutableStateOf(false) }
@@ -149,6 +150,34 @@ internal fun FoxyWebLoginDialog(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (signUp) {
+                        homeText("New to Firefox?", "حساب فایرفاکس نداری؟")
+                    } else {
+                        homeText("Already have a Firefox account?", "حساب فایرفاکس داری؟")
+                    },
+                    color = UacColors.TextSecondary,
+                    fontSize = 11.5.sp,
+                )
+                TextButton(onClick = { signUp = !signUp }) {
+                    Text(
+                        if (signUp) {
+                            homeText("Sign in instead", "ورود به حساب")
+                        } else {
+                            homeText("Create an account", "ساخت حساب")
+                        },
+                        fontSize = 11.5.sp,
+                        color = UacColors.DisconnectedBlue,
+                    )
+                }
             }
 
             if (progress < 1f || busy) {
@@ -254,7 +283,15 @@ internal fun FoxyWebLoginDialog(
                         webView = this
                     }
                 },
-                update = { view -> webView = view },
+                update = { view ->
+                    webView = view
+                    // Switching between sign-in and sign-up reuses the same WebView.
+                    val target = if (signUp) FoxyWebLogin.SIGNUP_URL else FoxyWebLogin.LOGIN_URL
+                    if (view.url != target && view.tag != target) {
+                        view.tag = target
+                        view.loadUrl(target)
+                    }
+                },
             )
         }
     }

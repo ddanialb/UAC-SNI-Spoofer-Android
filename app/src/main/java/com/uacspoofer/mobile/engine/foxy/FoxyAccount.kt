@@ -16,8 +16,10 @@ class FoxyAccount(
     var tokenExpiryEpochSeconds: Long = 0L,
     var proxyPassToken: String = "",
     var proxyPassExpiryEpochSeconds: Long = 0L,
-    var quotaLimitBytes: Long = DEFAULT_QUOTA_BYTES,
-    var quotaRemainingBytes: Long = DEFAULT_QUOTA_BYTES,
+    // No invented numbers: until Mozilla reports the real allowance these stay zero and the UI
+    // shows an explicit "unavailable" state instead of a fake 50 GB.
+    var quotaLimitBytes: Long = 0L,
+    var quotaRemainingBytes: Long = 0L,
     var quotaResetEpochSeconds: Long = 0L,
     var isActive: Boolean = false,
     var addedAtUtc: Long = System.currentTimeMillis(),
@@ -38,15 +40,22 @@ class FoxyAccount(
 
     val isWebLogin: Boolean get() = authMethod == AUTH_WEB
     val hasQuotaError: Boolean get() = quotaErrorMessage.isNotBlank()
+
+    /** True only when a real allowance was read from the API for this account. */
+    val hasQuotaData: Boolean
+        get() = quotaLimitBytes > 0 && quotaRemainingBytes >= 0 && lastQuotaCheckUtc != null
     val quotaUsedPercentage: Double
         get() = if (quotaLimitBytes <= 0) 0.0 else ((quotaLimitBytes - quotaRemainingBytes).toDouble() / quotaLimitBytes * 100.0).coerceIn(0.0, 100.0)
     val quotaRemainingPercentage: Double
         get() = if (quotaLimitBytes <= 0) 100.0 else (quotaRemainingBytes.toDouble() / quotaLimitBytes * 100.0).coerceIn(0.0, 100.0)
-    val quotaRemainingDisplay: String get() = "%.2f GB left".format(toGb(quotaRemainingBytes))
-    val quotaUsedDisplay: String get() = "%.2f GB used".format(toGb(quotaLimitBytes - quotaRemainingBytes))
-    val quotaLimitDisplay: String get() = "%.2f GB".format(toGb(quotaLimitBytes))
-    val quotaDisplay: String get() = "%.2f GB / %.2f GB".format(toGb(quotaRemainingBytes), toGb(quotaLimitBytes))
-    val quotaSummaryText: String get() = "%.2f GB of %.2f GB remaining".format(toGb(quotaRemainingBytes), toGb(quotaLimitBytes))
+    val quotaRemainingDisplay: String get() = if (hasQuotaData) "%.2f GB left".format(toGb(quotaRemainingBytes)) else ""
+    val quotaUsedDisplay: String
+        get() = if (hasQuotaData) "%.2f GB used".format(toGb(quotaLimitBytes - quotaRemainingBytes)) else ""
+    val quotaLimitDisplay: String get() = if (hasQuotaData) "%.2f GB".format(toGb(quotaLimitBytes)) else ""
+    val quotaDisplay: String
+        get() = if (hasQuotaData) "%.2f GB / %.2f GB".format(toGb(quotaRemainingBytes), toGb(quotaLimitBytes)) else ""
+    val quotaSummaryText: String
+        get() = if (hasQuotaData) "%.2f GB of %.2f GB remaining".format(toGb(quotaRemainingBytes), toGb(quotaLimitBytes)) else ""
     val quotaResetDisplay: String
         get() {
             if (quotaResetEpochSeconds <= 0) return ""
@@ -64,7 +73,6 @@ class FoxyAccount(
     companion object {
         const val AUTH_WEB = "web"
         const val AUTH_LEGACY = "legacy"
-        const val DEFAULT_QUOTA_BYTES = 53_687_091_200L // 50 GB
         private fun toGb(bytes: Long): Double = maxOf(0L, bytes) / 1_073_741_824.0
     }
 }

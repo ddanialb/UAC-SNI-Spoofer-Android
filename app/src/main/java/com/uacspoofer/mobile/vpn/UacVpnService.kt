@@ -34,6 +34,7 @@ import com.uacspoofer.mobile.engine.direct.DirectEngineStore
 import com.uacspoofer.mobile.engine.direct.DirectPhase
 import com.uacspoofer.mobile.engine.direct.DirectStatusStore
 import com.uacspoofer.mobile.engine.foxy.FoxyConnectionCoordinator
+import com.uacspoofer.mobile.engine.foxy.FoxyPhase
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 import com.uacspoofer.mobile.engine.foxy.FoxyTunRelayConfig
 import com.uacspoofer.mobile.engine.tor.TorConnectionCoordinator
@@ -244,6 +245,7 @@ class UacVpnService : VpnService() {
             ACTION_SWITCH_PROFILE -> requestSwitchProfile()
             ACTION_APPLY_TOR_EXIT -> requestApplyTorExit()
             ACTION_APPLY_POW_EXIT -> requestApplyPowExit()
+            ACTION_APPLY_FOXY_EXIT -> requestApplyFoxyExit()
             ACTION_APPLY_DIRECT_EXIT -> requestApplyDirectExit()
             ACTION_REFRESH_LATENCY -> requestLatencyRefresh()
             ACTION_ROUTE_MTU_PROBE -> requestRouteMtuProbe(intent.getStringExtra(EXTRA_ROUTE_PROBE_ID), startId)
@@ -1698,6 +1700,61 @@ class UacVpnService : VpnService() {
         job.invokeOnCompletion { if (connectJob === job) connectJob = null }
     }
 
+    /**
+     * Re-dials Foxy for a newly selected country. Foxy has no in-place edge swap, so the clean way
+     * is a full teardown + connect — which only works safely because the coordinator now releases
+     * its H2 sessions, SOCKS listeners and HEV relay on every stop.
+     */
+    private fun requestApplyFoxyExit() {
+        if (!engineModeStore.snapshot().isFoxy) return
+        val state = ConnectionStateStore.state.value
+        if (state != ConnectionState.CONNECTED && state != ConnectionState.CONNECTING) {
+            AppLogRepository.info(LogSource.APP, "Foxy: location saved for the next connection")
+            return
+        }
+        val location = FoxyStatusStore.status.value.countryCode.ifBlank { "auto" }
+        AppLogRepository.info(LogSource.APP, "Foxy: reconnecting for location=$location")
+        ConnectRescueStore.hide()
+        activeEngine = EngineMode.UAC_FOXY
+        val token = generation.incrementAndGet()
+        ConnectionStateStore.markConnecting()
+        FoxyStatusStore.update(FoxyPhase.STARTING, 5, "Reconnecting to the new location…")
+        runCatching { updateNotification(connected = false) }
+
+        val pendingConnect = connectJob
+        val pendingHealth = healthJob
+        val pendingStats = statsJob
+        val job = serviceScope.launch {
+            try {
+                pendingConnect?.cancelAndJoin()
+                pendingHealth?.cancelAndJoin()
+                pendingStats?.cancelAndJoin()
+                healthJob = null
+                statsJob = null
+                if (token != generation.get()) return@launch
+                lifecycleMutex.withLock {
+                    if (token != generation.get()) return@withLock
+                    cleanupRoute(holdVpn = true)
+                    resourcesActive = false
+                    connectFoxyEngine(token, advancedSettingsStore.snapshot())
+                }
+            } catch (_: CancellationException) {
+                if (ConnectionStateStore.state.value != ConnectionState.CONNECTING) FoxyStatusStore.reset()
+            } catch (error: Throwable) {
+                FoxyStatusStore.update(
+                    FoxyPhase.FAILED,
+                    0,
+                    error.message.orEmpty().ifBlank { "Foxy reconnect failed" },
+                )
+                Log.e(TAG, "foxy reconnect failed", error)
+                AppLogRepository.error(LogSource.APP, "Foxy reconnect failed", error)
+                lifecycleMutex.withLock { failClosedLocked(token) }
+            }
+        }
+        connectJob = job
+        job.invokeOnCompletion { if (connectJob === job) connectJob = null }
+    }
+
     private fun establishTun(
         settings: AdvancedSettingsData,
         dnsOverride: String? = null,
@@ -1816,6 +1873,10 @@ class UacVpnService : VpnService() {
         runCatching { torCoordinator.stop() }
         runCatching { directCoordinator.stop() }
         runCatching { powCoordinator.stop() }
+        // Foxy owns its own H2 sessions, SOCKS listeners and HEV relay. Leaving them running kept
+        // the ports and the TUN descriptor busy, so the next connect could not bind or start HEV.
+        runCatching { foxyCoordinator.stop() }
+        runCatching { FoxyStatusStore.reset() }
         nativeTunEngine.stop()
         proxyCore.stop()
         TunPacketFilter.stop()
@@ -2820,6 +2881,7 @@ class UacVpnService : VpnService() {
         const val ACTION_SWITCH_PROFILE = "com.uacspoofer.mobile.SWITCH_PROFILE"
         const val ACTION_APPLY_TOR_EXIT = "com.uacspoofer.mobile.APPLY_TOR_EXIT"
         const val ACTION_APPLY_POW_EXIT = "com.uacspoofer.mobile.APPLY_POW_EXIT"
+        const val ACTION_APPLY_FOXY_EXIT = "com.uacspoofer.mobile.APPLY_FOXY_EXIT"
         const val ACTION_APPLY_DIRECT_EXIT = "com.uacspoofer.mobile.APPLY_DIRECT_EXIT"
         const val ACTION_APPLY_NETWORK_GUARD = "com.uacspoofer.mobile.APPLY_NETWORK_GUARD"
         const val ACTION_APPLY_DIRECT_WHITELIST = "com.uacspoofer.mobile.APPLY_DIRECT_WHITELIST"

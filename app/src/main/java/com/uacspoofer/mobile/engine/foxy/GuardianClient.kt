@@ -72,17 +72,51 @@ class GuardianClient(
         } else {
             extractJwtExpiry(token) ?: (System.currentTimeMillis() / 1000 + 900)
         }
+        val fromHeaders = UsageSnapshot(
+            limit = readQuotaHeader(conn, "X-Quota-Limit"),
+            remaining = readQuotaHeader(conn, "X-Quota-Remaining"),
+            reset = readQuotaHeader(conn, "X-Quota-Reset"),
+        )
+        val fromBody = parseUsage(doc)
         return ProxyPassResult(
             token = token,
             expiresAtEpochSeconds = expiresAt,
-            quotaLimit = readQuotaHeader(conn, "X-Quota-Limit"),
-            quotaRemaining = readQuotaHeader(conn, "X-Quota-Remaining"),
-            quotaReset = readQuotaHeader(conn, "X-Quota-Reset"),
+            quotaLimit = fromHeaders.limit ?: fromBody.limit,
+            quotaRemaining = fromHeaders.remaining ?: fromBody.remaining,
+            quotaReset = fromHeaders.reset ?: fromBody.reset,
         )
     }
 
     private fun readQuotaHeader(conn: HttpURLConnection, name: String): Long? =
         conn.getHeaderField(name)?.toLongOrNull()
+
+    /**
+     * The token response does not always carry a quota. Try the status endpoint once; every
+     * failure is swallowed so an unknown allowance simply stays unknown instead of inventing one.
+     */
+    suspend fun fetchUsage(accessToken: String): UsageSnapshot? = withContext(Dispatchers.IO) {
+        runCatching {
+            val conn = open(URL(GUARDIAN_BASE + "/api/v1/fpn/status"))
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.setRequestProperty("Accept", "application/json")
+            conn.setRequestProperty("Authorization", "Bearer $accessToken")
+            val status = conn.responseCode
+            if (status !in 200..299) return@runCatching null
+            val doc = runCatching { JSONObject(readBody(conn)) }.getOrNull()
+            val headerUsage = UsageSnapshot(
+                limit = readQuotaHeader(conn, "X-Quota-Limit"),
+                remaining = readQuotaHeader(conn, "X-Quota-Remaining"),
+                reset = readQuotaHeader(conn, "X-Quota-Reset"),
+            )
+            val body = doc?.let { parseUsage(it) } ?: UsageSnapshot()
+            val merged = UsageSnapshot(
+                limit = headerUsage.limit ?: body.limit,
+                remaining = headerUsage.remaining ?: body.remaining,
+                reset = headerUsage.reset ?: body.reset,
+            )
+            merged.takeIf { it.limit != null || it.remaining != null }
+        }.getOrNull()
+    }
 
     suspend fun fetchCountries(): List<VpnCountry> = withContext(Dispatchers.IO) {
         cachedCountries?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
@@ -105,6 +139,12 @@ class GuardianClient(
             }
         }
     }
+
+    data class UsageSnapshot(
+        val limit: Long? = null,
+        val remaining: Long? = null,
+        val reset: Long? = null,
+    )
 
     private fun open(url: URL): HttpURLConnection {
         val conn = url.openConnection(proxy) as HttpURLConnection
@@ -130,6 +170,40 @@ class GuardianClient(
         private const val REMOTE_SETTINGS_URL =
             "https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/vpn-serverlist/records"
         private const val USER_AGENT = "MozillaVPN/2.35.0 (sys:linux; iap:true)"
+
+        /** Reads any of the shapes the FPN API has used for the monthly allowance. */
+        fun parseUsage(doc: JSONObject): UsageSnapshot {
+            val limit = firstBytes(doc, "quota_limit", "limit_bytes", "max_bytes", "quota", "limit", "total_bytes")
+            val remaining = firstBytes(
+                doc, "quota_remaining", "remaining_bytes", "bytes_remaining", "remaining",
+                "available_bytes", "quota_remaining_bytes",
+            )
+            val used = firstBytes(doc, "used_bytes", "bytes_used", "used", "quota_used")
+            val reset = firstLong(doc, "quota_reset", "reset_at", "period_end", "reset")
+            val resolvedLimit = limit ?: if (used != null && remaining != null) used + remaining else null
+            val resolvedRemaining =
+                remaining ?: if (limit != null && used != null) (limit - used).coerceAtLeast(0) else null
+            return UsageSnapshot(limit = resolvedLimit, remaining = resolvedRemaining, reset = reset)
+        }
+
+        private fun firstBytes(doc: JSONObject, vararg names: String): Long? =
+            firstLong(doc, *names)?.takeIf { it >= 0 }
+
+        private fun firstLong(doc: JSONObject, vararg names: String): Long? {
+            for (name in names) {
+                if (!doc.has(name)) continue
+                val value = runCatching { doc.get(name) }.getOrNull()
+                when (value) {
+                    is Number -> return value.toLong()
+                    is String -> value.trim().toLongOrNull()?.let { return it }
+                }
+            }
+            for (wrapper in listOf("quota", "usage", "account", "subscription", "data")) {
+                val nested = doc.optJSONObject(wrapper) ?: continue
+                firstLong(nested, *names)?.let { return it }
+            }
+            return null
+        }
 
         fun extractJwtExpiry(token: String): Long? {
             return try {

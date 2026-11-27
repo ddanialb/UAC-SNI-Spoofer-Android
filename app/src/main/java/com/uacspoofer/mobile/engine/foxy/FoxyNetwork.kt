@@ -106,14 +106,30 @@ object FoxyNetwork {
         } catch (_: Exception) {
             // Not a literal; continue to pinned/DoH.
         }
-        tryGetPinnedAddresses(host)?.let { return@withContext orderAddressesByHealth(it) }
+        // Every source is consulted and merged: on carriers that hijack DNS (or block DoH) the
+        // pinned anycast addresses are the only working path, while on healthy networks the live
+        // answer is preferred. Dialling then races all of them.
+        val pinned = runCatching { tryGetPinnedAddresses(host) }.getOrNull()
         val doh = runCatching { queryDoh(host) }.getOrDefault(emptyArray())
-        if (doh.isNotEmpty()) return@withContext orderAddressesByHealth(doh)
-        val sys = runCatching {
+        val system = runCatching {
             InetAddress.getAllByName(host).filter { !isBlockPageOrBogon(it) }.toTypedArray()
         }.getOrDefault(emptyArray())
-        if (sys.isNotEmpty()) return@withContext orderAddressesByHealth(sys)
-        emptyArray()
+        orderAddressesByHealth(mergeAddressSources(system, doh, pinned))
+    }
+
+    /** Union of the address sources, de-duplicated, keeping the first source's preference order. */
+    fun mergeAddressSources(vararg sources: Array<InetAddress>?): Array<InetAddress> {
+        val seen = LinkedHashSet<String>()
+        val out = ArrayList<InetAddress>()
+        for (source in sources) {
+            source ?: continue
+            for (address in source) {
+                val key = address.hostAddress ?: continue
+                if (isBlockPageOrBogon(address)) continue
+                if (seen.add(key)) out.add(address)
+            }
+        }
+        return out.toTypedArray()
     }
 
     private fun tryGetPinnedAddresses(host: String): Array<InetAddress>? {

@@ -84,10 +84,15 @@ object FoxyWebLogin {
     /** Reply to `fxaccounts:can_link_account`. */
     fun canLinkAccountReply(): String = """{"ok":true}"""
 
-    fun loginUrl(email: String? = null): String {
-        if (email.isNullOrBlank()) return LOGIN_URL
+    /** "Create a Firefox account" lands on the sign-up form of the very same page. */
+    const val SIGNUP_URL =
+        "https://accounts.firefox.com/?context=fx_desktop_v3&service=sync&action=signup"
+
+    fun loginUrl(email: String? = null, signUp: Boolean = false): String {
+        val base = if (signUp) SIGNUP_URL else LOGIN_URL
+        if (email.isNullOrBlank()) return base
         val encoded = java.net.URLEncoder.encode(email.trim(), "UTF-8").replace("+", "%20")
-        return "$LOGIN_URL&email=$encoded"
+        return "$base&email=$encoded"
     }
 
     /**

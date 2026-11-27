@@ -83,8 +83,12 @@ class FoxyConnectionCoordinator(
         establishTun: (AdvancedSettingsData) -> ParcelFileDescriptor?,
     ) = withContext(Dispatchers.IO) {
         lifecycle.withLock {
+            // Never inherit the previous session: a disconnect that only stopped the VPN service
+            // used to leave the old H2 tunnels, SOCKS listeners and HEV relay alive, which is why
+            // the second connection could not come up until the app was restarted.
+            teardownLocked()
             FoxyStatusStore.reset()
-            FoxyStatusStore.update(FoxyPhase.STARTING, 10, "Initializing Firefox VPN...")
+            FoxyStatusStore.update(FoxyPhase.STARTING, 10, "Preparing Firefox VPN...")
             val account = resolveActiveAccount()
             if (account == null) {
                 FoxyStatusStore.update(FoxyPhase.FAILED, 0, "No usable Firefox account. Sign in in Foxy Settings.")
@@ -124,15 +128,24 @@ class FoxyConnectionCoordinator(
                 val tun = checkNotNull(establishTun(backendSettings)) { "Android could not establish the VPN interface" }
                 tunDescriptor = tun
                 try {
+                    // Follow the user's global UDP choice: when UDP is enabled we keep the normal
+                    // UDP timeout instead of force-blocking QUIC; the relay itself is TCP-only, so
+                    // UDP still cannot be carried and falls back the way the setting asks for.
+                    val udpEnabled = settings.socksUdp
                     tunRelay.start(
                         service, backend, tun,
-                        SocksTunRelay.Config(sessionSocksPort, mtu, udp = false, fakeDns = FoxyTunRelayConfig.MAP_DNS),
+                        SocksTunRelay.Config(
+                            sessionSocksPort,
+                            mtu,
+                            udp = udpEnabled,
+                            fakeDns = FoxyTunRelayConfig.MAP_DNS,
+                        ),
                     ) {
                         "foxy/hev.yml" to FoxyTunRelayConfig.yaml(
                             mtu = mtu,
                             socksPort = sessionSocksPort,
                             tunIpv4 = settings.tunAddress,
-                            blockUdp = true,
+                            blockUdp = !udpEnabled,
                             bigBuffers = settings.bigBuffers,
                         )
                     }
@@ -147,6 +160,7 @@ class FoxyConnectionCoordinator(
                 secondaryJob = scope.launch { ensureSecondarySession(ordered) }
             }
             scope.launch { probeExitIp() }
+            scope.launch { runCatching { refreshQuota() } }
             running = true
             FoxyStatusStore.update(FoxyPhase.CONNECTED, 100, "Connected to Firefox VPN", edgeHost = chosen.host, countryCode = chosen.countryCode)
             AppLogRepository.success(LogSource.APP, "Foxy engine is active edge=${chosen.authority} country=${chosen.countryName}")
@@ -154,37 +168,42 @@ class FoxyConnectionCoordinator(
     }
 
     suspend fun stop() {
-        lifecycle.withLock {
-            running = false
-            renewalJob?.cancel()
-            secondaryJob?.cancel()
-            staggerJob?.cancel()
-            renewalJob = null
-            secondaryJob = null
-            staggerJob = null
-            socksServer?.dispose()
-            socksServer = null
-            sessionSocksPort = 0
-            sessionHttpPort = 0
-            for (i in sessions.indices) {
-                sessions[i]?.dispose()
-                sessions[i] = null
-            }
-            synchronized(retiredSessions) {
-                for (s in retiredSessions) s.dispose()
-                retiredSessions.clear()
-            }
-            tunRelay.stop()
-            tunDescriptor?.let { runCatching { it.close() } }
-            tunDescriptor = null
-            currentProxyPassToken = ""
-            currentProxyPassExpiry = 0L
-            connectedRegion = ""
-            connectedEdge = ""
-            connectedIp = ""
-            bytesSent.set(0L)
-            bytesReceived.set(0L)
+        lifecycle.withLock { teardownLocked() }
+    }
+
+    /** Requires [lifecycle]. Clears every resource the previous connect created. */
+    private fun teardownLocked() {
+        running = false
+        renewalJob?.cancel()
+        secondaryJob?.cancel()
+        staggerJob?.cancel()
+        renewalJob = null
+        secondaryJob = null
+        staggerJob = null
+        socksServer?.dispose()
+        socksServer = null
+        sessionSocksPort = 0
+        sessionHttpPort = 0
+        for (i in sessions.indices) {
+            sessions[i]?.dispose()
+            sessions[i] = null
         }
+        synchronized(retiredSessions) {
+            for (s in retiredSessions) s.dispose()
+            retiredSessions.clear()
+        }
+        tunRelay.stop()
+        tunDescriptor?.let { runCatching { it.close() } }
+        tunDescriptor = null
+        currentProxyPassToken = ""
+        currentProxyPassExpiry = 0L
+        connectedRegion = ""
+        connectedEdge = ""
+        connectedIp = ""
+        bytesSent.set(0L)
+        bytesReceived.set(0L)
+        // The UI must not keep showing a tunnel that no longer exists.
+        FoxyStatusStore.reset()
     }
 
     fun dispose() {
@@ -259,8 +278,34 @@ class FoxyConnectionCoordinator(
         if (pass.quotaRemaining != null) account.quotaRemainingBytes = pass.quotaRemaining
         if (pass.quotaReset != null) account.quotaResetEpochSeconds = pass.quotaReset
         account.lastUsedAtUtc = System.currentTimeMillis()
-        account.lastQuotaCheckUtc = System.currentTimeMillis()
+        // Only stamp the check time when a real number came back, otherwise the UI would claim
+        // "fresh" data that is still unknown.
+        if (pass.quotaLimit != null || pass.quotaRemaining != null) {
+            account.lastQuotaCheckUtc = System.currentTimeMillis()
+        }
         account.quotaErrorMessage = ""
+    }
+
+    /**
+     * Pulls the monthly allowance for the active account. Called after a connect and from the
+     * settings refresh action; never fabricates a value when Mozilla does not report one.
+     */
+    suspend fun refreshQuota(): Boolean = withContext(Dispatchers.IO) {
+        val account = resolveActiveAccount() ?: return@withContext false
+        val token = account.accessToken
+        if (token.isBlank()) return@withContext false
+        val usage = runCatching { guardian().fetchUsage(token) }.getOrNull()
+        if (usage == null) {
+            account.lastQuotaCheckUtc = System.currentTimeMillis()
+            accountStore.saveAccount(account)
+            return@withContext false
+        }
+        if (usage.limit != null) account.quotaLimitBytes = usage.limit
+        if (usage.remaining != null) account.quotaRemainingBytes = usage.remaining
+        if (usage.reset != null) account.quotaResetEpochSeconds = usage.reset
+        account.lastQuotaCheckUtc = System.currentTimeMillis()
+        accountStore.saveAccount(account)
+        usage.limit != null || usage.remaining != null
     }
 
     private suspend fun refreshProxyPass(): String? {
@@ -651,11 +696,18 @@ class FoxyConnectionCoordinator(
      */
     private suspend fun probeExitIp() = withContext(Dispatchers.IO) {
         delay(500)
-        val socks = sessionSocksPort
-        if (socks <= 0) return@withContext
-        val httpPort = if (socks in 1024..65_534) socks + 1 else 0
-        if (httpPort == 0) return@withContext
+        val httpPort = sessionHttpPort
+        if (httpPort <= 0) return@withContext
         val url = "https://api.ipify.org"
+        for (attempt in 0 until EXIT_IP_ATTEMPTS) {
+            if (!running) return@withContext
+            if (probeExitIpOnce(url, httpPort)) return@withContext
+            delay(EXIT_IP_RETRY_DELAY_MS)
+        }
+        AppLogRepository.debug(LogSource.APP, "Foxy: exit IP probe did not answer; tunnel is unaffected")
+    }
+
+    private fun probeExitIpOnce(url: String, httpPort: Int): Boolean {
         try {
             val proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", httpPort))
             val conn = java.net.URL(url).openConnection(proxy) as java.net.HttpURLConnection
@@ -674,10 +726,12 @@ class FoxyConnectionCoordinator(
                     progressPercent = FoxyStatusStore.status.value.progressPercent,
                     exitIp = ip,
                 )
+                return true
             }
         } catch (_: Exception) {
-            // Non-fatal: no exit IP shown.
+            // Non-fatal: the tunnel is already usable, only the badge stays empty.
         }
+        return false
     }
 
     /** Current upstream proxy plus its fingerprint, so cached clients rebuild on change. */
@@ -713,6 +767,8 @@ class FoxyConnectionCoordinator(
         private const val EDGE_ATTEMPT_TIMEOUT_MS = 12_000L
         private const val MAX_REMEMBERED_FAILED_EDGES = 8
         private const val FAILED_EDGE_COOLDOWN_MS = 10 * 60 * 1000L
+        private const val EXIT_IP_ATTEMPTS = 3
+        private const val EXIT_IP_RETRY_DELAY_MS = 900L
         private val IPV4_REGEX = Regex("""^(\d{1,3}\.){3}\d{1,3}$""")
         private val IPV6_REGEX = Regex("^[0-9a-fA-F:]{2,45}$")
     }

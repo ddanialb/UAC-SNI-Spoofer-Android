@@ -42,6 +42,13 @@ object VpnController {
         context.startService(intent)
     }
 
+    fun applyFoxyExit(context: Context) {
+        val state = ConnectionStateStore.state.value
+        if (state != ConnectionState.CONNECTED && state != ConnectionState.CONNECTING) return
+        val intent = Intent(context, UacVpnService::class.java).setAction(UacVpnService.ACTION_APPLY_FOXY_EXIT)
+        context.startService(intent)
+    }
+
     fun selectDirectExit(context: Context, countryCode: String) {
         val store = DirectEngineStore.get(context)
         val current = store.snapshot()

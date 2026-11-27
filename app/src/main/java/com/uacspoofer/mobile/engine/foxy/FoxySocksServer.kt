@@ -15,10 +15,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.uacspoofer.mobile.logging.AppLogRepository
+import com.uacspoofer.mobile.logging.LogSource
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -95,6 +98,10 @@ class FoxySocksServer(
     }
 
     fun stop() {
+        // Close synchronously and drop the accept loop before releasing the ports: the next
+        // connect rebinds the same ports and must not race the previous listeners.
+        acceptJob?.cancel()
+        acceptJob = null
         runCatching { socksListener?.close() }
         runCatching { httpListener?.close() }
         socksListener = null
@@ -108,14 +115,36 @@ class FoxySocksServer(
         scope.cancel()
     }
 
+    /**
+     * Binds the requested port and keeps it. The old code fell back to a random port without
+     * telling anyone, so HEV and the exit-IP probe were pointed at a port nobody was listening on
+     * (the `ECONNREFUSED 127.0.0.1:<port>` in the logs) while the UI looked connected.
+     */
     private fun bindLoopback(requested: Int): ServerSocket {
         val port = if (requested in 1024..65_535) requested else 0
-        return try {
-            ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"))
-        } catch (_: Exception) {
-            ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        if (port == 0) return newListener(0)
+        var last: Exception? = null
+        for (attempt in 0 until BIND_ATTEMPTS) {
+            try {
+                return newListener(port)
+            } catch (e: Exception) {
+                last = e
+                // A previous listener (or its TIME_WAIT sockets) can hold the port for a moment.
+                Thread.sleep(BIND_RETRY_DELAY_MS)
+            }
         }
+        AppLogRepository.warning(
+            LogSource.APP,
+            "Foxy: local port $port is busy (${last?.message}); falling back to a random port",
+        )
+        return newListener(0)
     }
+
+    private fun newListener(port: Int): ServerSocket =
+        ServerSocket().apply {
+            reuseAddress = true // required to rebind over TIME_WAIT sockets after a disconnect
+            bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 50)
+        }
 
     private suspend fun acceptLoop(listener: ServerSocket, handler: suspend (Socket) -> Unit) {
         while (!listener.isClosed) {
@@ -421,5 +450,7 @@ class FoxySocksServer(
 
     private companion object {
         const val RELAY_BUFFER_SIZE = 32 * 1024
+        const val BIND_ATTEMPTS = 6
+        const val BIND_RETRY_DELAY_MS = 120L
     }
 }

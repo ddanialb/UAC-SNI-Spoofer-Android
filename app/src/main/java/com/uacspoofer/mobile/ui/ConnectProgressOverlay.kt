@@ -230,7 +230,7 @@ internal fun ConnectProgressOverlay(
             }
             ConnectOverlayEngine.FOXY -> {
                 val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
-                val steps = ConnectProgressModel.foxySteps(status.phase)
+                val steps = ConnectProgressModel.foxySteps(status)
                 val focused = steps.getOrNull(ConnectProgressModel.focusIndex(steps))?.detail.orEmpty()
                 val raw = if (status.detail.isNotBlank()) status.detail else focused
                 // Persian users see the stage in Persian; failures keep the technical message so

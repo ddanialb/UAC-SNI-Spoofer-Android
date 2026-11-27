@@ -1,6 +1,8 @@
 package com.uacspoofer.mobile.ui
 
 import com.uacspoofer.mobile.engine.foxy.FoxyPhase
+import com.uacspoofer.mobile.engine.foxy.FoxyStepState
+import com.uacspoofer.mobile.engine.foxy.FoxyUiStatus
 
 import com.uacspoofer.mobile.auto.AutoBootstrapSnapshot
 import com.uacspoofer.mobile.auto.AutoStage
@@ -99,8 +101,27 @@ object ConnectProgressModel {
         Triple("tunnel", "Tunnel", "تونل"),
     )
 
-    /** Foxy connect stages: account → Mozilla auth/Guardian → edge → tunnel. */
-    fun foxySteps(phase: FoxyPhase): List<MiniStep> {
+    /**
+     * Foxy connect stages. The engine publishes what it is doing as it goes, so those real steps
+     * are shown as-is; the coarse phase list is only a placeholder for the moment before the
+     * first message arrives. Nothing here invents progress.
+     */
+    fun foxySteps(status: FoxyUiStatus): List<MiniStep> {
+        val real = status.steps
+        if (real.isEmpty()) return foxyPhaseSteps(status.phase)
+        val lastIndex = real.lastIndex
+        return real.mapIndexed { i, step ->
+            val state = when (step.state) {
+                FoxyStepState.DONE -> MiniStepState.DONE
+                FoxyStepState.FAILED -> MiniStepState.FAILED
+                FoxyStepState.RUNNING -> if (i == lastIndex) MiniStepState.RUNNING else MiniStepState.DONE
+            }
+            MiniStep("foxy-$i", step.text, step.text, state)
+        }
+    }
+
+    /** Placeholder hierarchy shown until the engine reports its first real step. */
+    fun foxyPhaseSteps(phase: FoxyPhase): List<MiniStep> {
         val failed = phase == FoxyPhase.FAILED
         val pos = when (phase) {
             FoxyPhase.CONNECTED -> foxyLabels.size

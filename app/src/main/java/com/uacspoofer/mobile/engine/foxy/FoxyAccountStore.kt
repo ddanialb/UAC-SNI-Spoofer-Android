@@ -39,8 +39,10 @@ class FoxyAccountStore private constructor(context: Context) {
             existing.accessToken = account.accessToken
             existing.refreshToken = account.refreshToken
             existing.tokenExpiryEpochSeconds = account.tokenExpiryEpochSeconds
+            existing.quotaErrorMessage = account.quotaErrorMessage
+            existing.maxDevices = account.maxDevices
+            existing.authMethod = account.authMethod
             existing.addedAtUtc = System.currentTimeMillis()
-            existing.quotaErrorMessage = ""
             stored = existing
         } else {
             list.add(account)
@@ -113,6 +115,8 @@ class FoxyAccountStore private constructor(context: Context) {
             obj.put("lastUsedAtUtc", account.lastUsedAtUtc ?: JSONObject.NULL)
             obj.put("lastQuotaCheckUtc", account.lastQuotaCheckUtc ?: JSONObject.NULL)
             obj.put("quotaErrorMessage", account.quotaErrorMessage)
+            obj.put("authMethod", account.authMethod)
+            obj.put("maxDevices", account.maxDevices)
             // Secrets (Keystore-encrypted).
             obj.put("sessionTokenEnc", secure.encrypt(account.sessionToken))
             obj.put("accessTokenEnc", secure.encrypt(account.accessToken))
@@ -148,6 +152,8 @@ class FoxyAccountStore private constructor(context: Context) {
                     lastUsedAtUtc = if (obj.isNull("lastUsedAtUtc")) null else obj.optLong("lastUsedAtUtc", 0L).takeIf { it > 0 },
                     lastQuotaCheckUtc = if (obj.isNull("lastQuotaCheckUtc")) null else obj.optLong("lastQuotaCheckUtc", 0L).takeIf { it > 0 },
                     quotaErrorMessage = obj.optString("quotaErrorMessage", ""),
+                    maxDevices = obj.optInt("maxDevices", 0),
+                    authMethod = obj.optString("authMethod", FoxyAccount.AUTH_LEGACY),
                 )
                 if (account.id.isNotBlank()) out.add(account)
             }

@@ -24,8 +24,19 @@ class FoxyAccount(
     var lastUsedAtUtc: Long? = null,
     var lastQuotaCheckUtc: Long? = null,
     var quotaErrorMessage: String = "",
+    var maxDevices: Int = 0,
+    /**
+     * How this account was signed in. [AUTH_WEB] is the in-app browser flow (Guardian
+     * session JWT, no stored password); [AUTH_LEGACY] is the old FxA email+password login.
+     */
+    var authMethod: String = AUTH_WEB,
 ) {
-    val hasUsableCredentials: Boolean get() = accessToken.isNotBlank() && refreshToken.isNotBlank()
+    val hasUsableCredentials: Boolean get() = accessToken.isNotBlank()
+
+    /** True when the token can be renewed without asking the user to sign in again. */
+    val canRefreshSilently: Boolean get() = refreshToken.isNotBlank()
+
+    val isWebLogin: Boolean get() = authMethod == AUTH_WEB
     val hasQuotaError: Boolean get() = quotaErrorMessage.isNotBlank()
     val quotaUsedPercentage: Double
         get() = if (quotaLimitBytes <= 0) 0.0 else ((quotaLimitBytes - quotaRemainingBytes).toDouble() / quotaLimitBytes * 100.0).coerceIn(0.0, 100.0)
@@ -51,6 +62,8 @@ class FoxyAccount(
         }
 
     companion object {
+        const val AUTH_WEB = "web"
+        const val AUTH_LEGACY = "legacy"
         const val DEFAULT_QUOTA_BYTES = 53_687_091_200L // 50 GB
         private fun toGb(bytes: Long): Double = maxOf(0L, bytes) / 1_073_741_824.0
     }

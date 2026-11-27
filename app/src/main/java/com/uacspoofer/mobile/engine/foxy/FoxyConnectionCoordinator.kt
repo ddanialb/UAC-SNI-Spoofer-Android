@@ -210,7 +210,14 @@ class FoxyConnectionCoordinator(
         for (round in 1..3) {
             try {
                 val now = System.currentTimeMillis() / 1000
-                if (current.tokenExpiryEpochSeconds <= now + 300) {
+                if (current.tokenExpiryEpochSeconds in 1..(now + 300)) {
+                    if (!current.canRefreshSilently) {
+                        AppLogRepository.warning(
+                            LogSource.APP,
+                            "Foxy: the Mozilla session for ${current.email} expired. Sign in again from Foxy settings.",
+                        )
+                        break
+                    }
                     if (!fxa().refreshAccessToken(current)) {
                         AppLogRepository.warning(LogSource.APP, "Foxy: could not refresh the access token for ${current.email}; sign in again.")
                         break
@@ -230,6 +237,13 @@ class FoxyConnectionCoordinator(
                 tried.add(next.id)
                 current = next
             } catch (e: FoxyAuthTokenInvalidException) {
+                if (!current.canRefreshSilently) {
+                    AppLogRepository.warning(
+                        LogSource.APP,
+                        "Foxy: Mozilla rejected the stored session for ${current.email}. Sign in again from Foxy settings.",
+                    )
+                    break
+                }
                 if (!fxa().refreshAccessToken(current)) break
                 accountStore.saveAccount(current)
             }

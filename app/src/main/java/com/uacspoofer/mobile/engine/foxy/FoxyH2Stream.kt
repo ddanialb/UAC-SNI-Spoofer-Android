@@ -6,7 +6,7 @@
 package com.uacspoofer.mobile.engine.foxy
 
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.channels.Channel
 import java.io.IOException
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicInteger
@@ -20,7 +20,8 @@ class FoxyH2Stream(
     private val statusDeferred = CompletableDeferred<Int>()
     private val inboundLock = Any()
     private val inboundQueue: ArrayDeque<ByteArray> = ArrayDeque()
-    private val inboundSignal = Semaphore(0)
+    /** Coalescing signal: kotlinx Semaphore(0) is illegal (it requires >= 1 permit). */
+    private val inboundSignal = Channel<Unit>(Channel.CONFLATED)
     private var currentChunk: ByteArray = ByteArray(0)
     private var currentOffset = 0
     private var completed = false
@@ -47,7 +48,7 @@ class FoxyH2Stream(
         statusDeferred.completeExceptionally(ex)
         synchronized(inboundLock) {
             error = ex
-            inboundSignal.release()
+            runCatching { inboundSignal.trySend(Unit) }
         }
     }
 
@@ -55,13 +56,13 @@ class FoxyH2Stream(
         if (data.isNotEmpty()) {
             synchronized(inboundLock) {
                 inboundQueue.add(data)
-                inboundSignal.release()
+                runCatching { inboundSignal.trySend(Unit) }
             }
         }
         if (isEnd) {
             synchronized(inboundLock) {
                 completed = true
-                inboundSignal.release()
+                runCatching { inboundSignal.trySend(Unit) }
             }
             session.removeStream(streamId)
         }
@@ -73,7 +74,7 @@ class FoxyH2Stream(
         statusDeferred.completeExceptionally(ex)
         synchronized(inboundLock) {
             error = ex
-            inboundSignal.release()
+            runCatching { inboundSignal.trySend(Unit) }
         }
     }
 
@@ -117,7 +118,7 @@ class FoxyH2Stream(
                 }
                 return take
             }
-            inboundSignal.acquire()
+            inboundSignal.receive()
         }
     }
 
@@ -144,7 +145,7 @@ class FoxyH2Stream(
             currentOffset = 0
             while (inboundQueue.isNotEmpty()) unconsumed += inboundQueue.removeFirst().size
             completed = true
-            inboundSignal.release()
+            runCatching { inboundSignal.trySend(Unit) }
         }
         val connCredit = unconsumed + maxOf(0, pendingWindowUpdate.getAndSet(0))
         if (connCredit > 0) session.sendWindowUpdate(0, connCredit)

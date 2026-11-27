@@ -46,7 +46,8 @@ class FoxyH2Session(
     private val pendingHeaderBlocks = ConcurrentHashMap<Int, ByteArray>()
     private val hpackDynamicTable = mutableListOf<Pair<String, String>>()
     private val windowLock = Any()
-    private val sendWindowSignal = kotlinx.coroutines.sync.Semaphore(0, 1)
+    /** Coalescing signal: kotlinx Semaphore(0) is illegal (it requires >= 1 permit). */
+    private val sendWindowSignal = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     private var peerInitialWindowSize = 65535
     private var connSendWindow = 65535L
     private val nextStreamId = AtomicInteger(1)
@@ -73,7 +74,7 @@ class FoxyH2Session(
     val remoteAddress: InetAddress? get() = socket?.remoteSocketAddress?.let { (it as? InetSocketAddress)?.address }
 
     private fun signalSendWindow() {
-        if (sendWindowSignal.availablePermits == 0) runCatching { sendWindowSignal.release() }
+        runCatching { sendWindowSignal.trySend(Unit) }
     }
 
     fun raiseFailed(reason: String) {
@@ -241,7 +242,7 @@ class FoxyH2Session(
                         }
                     }
                     if (windowAllocated) break
-                    withTimeoutOrNull(500) { sendWindowSignal.acquire() }
+                    withTimeoutOrNull(500) { sendWindowSignal.receive() }
                 }
                 if (!windowAllocated) {
                     val fallbackSlice = minOf(remaining, 16384)

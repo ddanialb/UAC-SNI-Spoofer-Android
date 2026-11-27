@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.uacspoofer.mobile.engine.foxy.FoxyEngineStore
 import com.uacspoofer.mobile.engine.foxy.GuardianClient
 import com.uacspoofer.mobile.engine.foxy.VpnCountry
+import com.uacspoofer.mobile.profiles.CountryMetadata
 import com.uacspoofer.mobile.ui.theme.UacColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -156,6 +157,24 @@ private fun FoxyCountryRow(
             },
             modifier = Modifier.size(17.dp),
         )
+        val flag = remember(code) { CountryMetadata.resolve(code, name).flagEmoji }
+        if (!flag.isNullOrBlank()) {
+            Text(flag, fontSize = 18.sp)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .background(accent.copy(alpha = 0.12f), RoundedCornerShape(6.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.Public,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 name,

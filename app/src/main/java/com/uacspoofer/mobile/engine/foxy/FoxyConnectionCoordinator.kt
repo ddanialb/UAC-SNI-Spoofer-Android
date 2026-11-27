@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicLong
 
@@ -291,19 +292,43 @@ class FoxyConnectionCoordinator(
         val attempts = minOf(ordered.size, MAX_EDGE_ATTEMPTS)
         for (i in 0 until attempts) {
             val candidate = ordered[i]
-            try {
-                FoxyStatusStore.update(FoxyPhase.EDGE, 60 + i * 30 / maxOf(1, attempts), "Connecting to Fastly edge (${candidate.host})...")
-                val edge = FoxyH2Session(candidate.host, candidate.port, engineStore.snapshot().upstreamProxy(), avoidAddress, service as? VpnService)
-                edge.connect()
-                session = edge
-                chosen = candidate
-                break
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastError = e
-                AppLogRepository.warning(LogSource.APP, "Foxy edge ${candidate.authority} failed: ${e.message}")
+            // Mozilla edges answer on 2499 and (through Fastly) on 443. Trying both, per
+            // edge, is what makes this survive networks that only allow outbound HTTPS.
+            for (port in candidatePorts(candidate.port)) {
+                val authority = "${candidate.host}:$port"
+                try {
+                    FoxyStatusStore.update(
+                        FoxyPhase.EDGE,
+                        60 + i * 30 / maxOf(1, attempts),
+                        "Connecting to Fastly edge ($authority)...",
+                    )
+                    val edge = withTimeoutOrNull(EDGE_ATTEMPT_TIMEOUT_MS) {
+                        val session = FoxyH2Session(
+                            candidate.host,
+                            port,
+                            engineStore.snapshot().upstreamProxy(),
+                            avoidAddress,
+                            service as? VpnService,
+                        )
+                        session.connect()
+                        session
+                    }
+                    if (edge == null) {
+                        lastError = java.io.IOException("Timed out connecting to $authority")
+                        AppLogRepository.warning(LogSource.APP, "Foxy edge $authority timed out after ${EDGE_ATTEMPT_TIMEOUT_MS / 1000}s")
+                        continue
+                    }
+                    session = edge
+                    chosen = candidate
+                    break
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastError = e
+                    AppLogRepository.warning(LogSource.APP, "Foxy edge $authority failed: ${e.message}")
+                }
             }
+            if (session != null) break
         }
         if (session == null && ordered.none { it.host.equals("p.m1.fastly-masque.net", ignoreCase = true) }) {
             try {
@@ -652,6 +677,10 @@ class FoxyConnectionCoordinator(
         )
     }
 
+    /** Edge ports worth trying for one host, in order. */
+    private fun candidatePorts(preferred: Int): List<Int> =
+        if (preferred == 443) listOf(443, 2499) else listOf(preferred, 443)
+
     private fun guardian(): GuardianClient {
         val (proxy, fingerprint, auth) = currentProxy()
         val existing = guardian
@@ -671,7 +700,8 @@ class FoxyConnectionCoordinator(
     }
 
     companion object {
-        private const val MAX_EDGE_ATTEMPTS = 4
+        private const val MAX_EDGE_ATTEMPTS = 8
+        private const val EDGE_ATTEMPT_TIMEOUT_MS = 12_000L
         private const val MAX_REMEMBERED_FAILED_EDGES = 8
         private const val FAILED_EDGE_COOLDOWN_MS = 10 * 60 * 1000L
         private val IPV4_REGEX = Regex("""^(\d{1,3}\.){3}\d{1,3}$""")

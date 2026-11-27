@@ -240,44 +240,57 @@ class GuardianClient(
             return ordered
         }
 
+        /**
+         * Offline copy of Mozilla's vpn-serverlist (Remote Settings), regenerated from
+         * https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/vpn-serverlist/records
+         * so every country Foxy can use is selectable even without a network round-trip.
+         */
         fun getBuiltInFallbackCountries(): List<VpnCountry> = listOf(
-            country("Recommended", "REC", "Fastest Edge", "REC", "p.m1.fastly-masque.net"),
-            country("Argentina", "AR", "Argentina", "EZE", "eze223.m1.fastly-masque.net"),
-            country("Australia", "AU", "Australia", "YSBK", "ysbk106.m1.fastly-masque.net"),
-            country("Austria", "AT", "Austria", "VIE", "vie63.m1.fastly-masque.net"),
-            country("Belgium", "BE", "Belgium", "BRU", "bru148.m1.fastly-masque.net"),
-            country("Brazil", "BR", "Brazil", "SBSP", "sbsp209.m1.fastly-masque.net"),
-            country("Bulgaria", "BG", "Bulgaria", "SOF", "sof151.m1.fastly-masque.net"),
-            country("Canada", "CA", "Canada", "CA", "ca.m1.fastly-masque.net"),
-            country("Chile", "CL", "Chile", "SCL", "scl222.m1.fastly-masque.net"),
-            country("Colombia", "CO", "Colombia", "SKBO", "skbo234.m1.fastly-masque.net"),
-            country("Denmark", "DK", "Denmark", "CPH", "cph232.m1.fastly-masque.net"),
-            country("Finland", "FI", "Finland", "HEL", "hel141.m1.fastly-masque.net"),
-            country("France", "FR", "France", "LFPB", "lfpb115.m1.fastly-masque.net"),
-            country("Germany", "DE", "Germany", "MUC", "muc139.m1.fastly-masque.net"),
-            country("Ghana", "GH", "Ghana", "ACC", "acc96.m1.fastly-masque.net"),
-            country("Ireland", "IE", "Ireland", "DUB", "dub43.m1.fastly-masque.net"),
-            country("Italy", "IT", "Italy", "MXP", "mxp69.m1.fastly-masque.net"),
-            country("Japan", "JP", "Japan", "RJTF", "rjtf770.m1.fastly-masque.net"),
-            country("Korea", "KR", "Korea", "ICN", "icn145.m1.fastly-masque.net"),
-            country("Malaysia", "MY", "Malaysia", "KUL", "kul98.m1.fastly-masque.net"),
-            country("Mexico", "MX", "Mexico", "MMQT", "mmqt107.m1.fastly-masque.net"),
-            country("Netherlands", "NL", "Netherlands", "EHRD", "ehrd229.m1.fastly-masque.net"),
-            country("New Zealand", "NZ", "New Zealand", "AKL", "akl103.m1.fastly-masque.net"),
-            country("Norway", "NO", "Norway", "OSL", "osl65.m1.fastly-masque.net"),
-            country("Peru", "PE", "Peru", "SPJC", "spjc128.m1.fastly-masque.net"),
-            country("Philippines", "PH", "Philippines", "MNL", "mnl215.m1.fastly-masque.net"),
-            country("Portugal", "PT", "Portugal", "LIS", "lis149.m1.fastly-masque.net"),
-            country("Singapore", "SG", "Singapore", "WSAT", "wsat188.m1.fastly-masque.net"),
-            country("South Africa", "ZA", "South Africa", "FAOR", "faor73.m1.fastly-masque.net"),
-            country("Spain", "ES", "Spain", "LETO", "leto235.m1.fastly-masque.net"),
-            country("Sweden", "SE", "Sweden", "ESSB", "essb127.m1.fastly-masque.net"),
-            country("Thailand", "TH", "Thailand", "BKK", "bkk228.m1.fastly-masque.net"),
-            country("United Kingdom", "GB", "United Kingdom", "EGLC", "eglc860.m1.fastly-masque.net"),
-            country("United States", "US", "United States", "US", "us.m1.fastly-masque.net"),
+            country("Recommended", "REC", "Fastest Edge", "REC", "p.m1.fastly-masque.net", 2499),
+            country("Argentina", "AR", "Argentina", "EZE", "eze223.m1.fastly-masque.net", 2499),
+            country("Australia", "AU", "Australia", "YSBK", "ysbk106.m1.fastly-masque.net", 2499),
+            country("Austria", "AT", "Austria", "VIE", "vie63.m1.fastly-masque.net", 2499),
+            country("Belgium", "BE", "Belgium", "BRU", "bru148.m1.fastly-masque.net", 2499),
+            country("Brazil", "BR", "Brazil", "SBSP", "sbsp209.m1.fastly-masque.net", 2499),
+            country("Bulgaria", "BG", "Bulgaria", "SOF", "sof151.m1.fastly-masque.net", 2499),
+            country("Canada", "CA", "Canada", "CA", "ca.m1.fastly-masque.net", 2499),
+            country("CatchAll Anycast", "US", "USA", "Q30", "p.m1.fastly-masque.net", 2499),
+            country("Chile", "CL", "Chile", "SCL", "scl222.m1.fastly-masque.net", 2499),
+            country("Colombia", "CO", "Colombia", "SKBO", "skbo234.m1.fastly-masque.net", 2499),
+            country("Denmark", "DK", "Denmark", "CPH", "cph232.m1.fastly-masque.net", 2499),
+            country("Finland", "FI", "Finland", "HEL", "hel141.m1.fastly-masque.net", 2499),
+            country("France", "FR", "France", "LFPB", "lfpb115.m1.fastly-masque.net", 2499),
+            country("Germany", "DE", "Germany", "MUC", "muc139.m1.fastly-masque.net", 2499),
+            country("Ghana", "GH", "Ghana", "ACC", "acc96.m1.fastly-masque.net", 2499),
+            country("Ireland", "IE", "Ireland", "DUB", "dub43.m1.fastly-masque.net", 2499),
+            country("Italy", "IT", "Italy", "LIME", "lime121.m1.fastly-masque.net", 2499),
+            country("Japan", "JP", "Japan", "RJTF", "rjtf770.m1.fastly-masque.net", 2499),
+            country("Korea", "KR", "Korea", "ICN", "icn145.m1.fastly-masque.net", 2499),
+            country("Malaysia", "MY", "Malaysia", "KUL", "kul98.m1.fastly-masque.net", 2499),
+            country("Mexico", "MX", "Mexico", "MMQT", "mmqt107.m1.fastly-masque.net", 2499),
+            country("Netherlands", "NL", "Netherlands", "EHRD", "ehrd229.m1.fastly-masque.net", 2499),
+            country("New Zealand", "NZ", "New Zealand", "AKL", "akl103.m1.fastly-masque.net", 2499),
+            country("Norway", "NO", "Norway", "OSL", "osl65.m1.fastly-masque.net", 2499),
+            country("Peru", "PE", "Peru", "SPJC", "spjc128.m1.fastly-masque.net", 2499),
+            country("Philippines", "PH", "Philippines", "MNL", "mnl215.m1.fastly-masque.net", 2499),
+            country("Portugal", "PT", "Portugal", "LIS", "lis149.m1.fastly-masque.net", 2499),
+            country("Recomended Location", "REC", "Recomended City", "REC", "p.m1.fastly-masque.net", 2499),
+            country("Singapore", "SG", "Singapore", "WSAT", "wsat188.m1.fastly-masque.net", 2499),
+            country("South Africa", "ZA", "South Africa", "FAOR", "faor73.m1.fastly-masque.net", 2499),
+            country("Spain", "ES", "Spain", "LETO", "leto235.m1.fastly-masque.net", 2499),
+            country("Sweden", "SE", "Sweden", "ESSB", "essb127.m1.fastly-masque.net", 2499),
+            country("Thailand", "TH", "Thailand", "BKK", "bkk228.m1.fastly-masque.net", 2499),
+            country("United Kingdom", "GB", "United Kingdom", "EGLC", "eglc860.m1.fastly-masque.net", 2499),
+            country("United States", "US", "United States", "US", "us.m1.fastly-masque.net", 2499),
         )
 
-        private fun country(name: String, code: String, cityName: String, cityCode: String, host: String) =
-            VpnCountry(name, code, listOf(VpnCity(cityName, cityCode, listOf(VpnServerNode(host, 2499)))))
+        private fun country(
+            name: String,
+            code: String,
+            cityName: String,
+            cityCode: String,
+            host: String,
+            port: Int,
+        ) = VpnCountry(name, code, listOf(VpnCity(cityName, cityCode, listOf(VpnServerNode(host, port)))))
     }
 }

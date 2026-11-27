@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Route
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -47,6 +48,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.uacspoofer.mobile.engine.foxy.FoxyAccount
 import com.uacspoofer.mobile.engine.foxy.FoxyAccountStore
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
+import com.uacspoofer.mobile.engine.foxy.FoxyEngineStore
+import com.uacspoofer.mobile.engine.foxy.FoxyPhase
+import com.uacspoofer.mobile.profiles.CountryMetadata
 import com.uacspoofer.mobile.ui.theme.UacColors
 
 @Composable
@@ -56,8 +60,15 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     val accountStore = remember(context) { FoxyAccountStore.get(context) }
     val accounts by accountStore.accounts.collectAsStateWithLifecycle()
     val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
+    val engineStore = remember(context) { FoxyEngineStore.get(context) }
+    val engineSettings by engineStore.settings.collectAsStateWithLifecycle()
+    val selectedCountry = remember(engineSettings.serverCountry) {
+        val code = engineSettings.serverCountry
+        if (code.isBlank() || code == "REC") CountryMetadata.UNKNOWN else CountryMetadata.resolve(code, null)
+    }
     var loginVisible by remember { mutableStateOf(false) }
     var flowVisible by remember { mutableStateOf(false) }
+    var locationVisible by remember { mutableStateOf(false) }
 
     ToolPageScaffold(
         accent = accent,
@@ -112,6 +123,48 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             }
         }
 
+        item { FoxySectionTitle(homeText("Connection", "اتصال")) }
+
+        item {
+            FoxyCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = selectedCountry.flagEmoji ?: "🌐",
+                        fontSize = 22.sp,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = homeText("Location", "لوکیشن"),
+                            color = UacColors.TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            text = if (selectedCountry.isKnown) {
+                                homeText(selectedCountry.countryName, selectedCountry.countryName)
+                            } else {
+                                homeText("Automatic (fastest edge)", "خودکار (نزدیک‌ترین سرور)")
+                            },
+                            color = UacColors.TextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    TextButton(onClick = { locationVisible = true }) {
+                        Text(
+                            homeText("Change", "تغییر"),
+                            color = accent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
+
         item { FoxySectionTitle(homeText("Firefox account", "حساب فایرفاکس")) }
 
         if (accounts.isEmpty()) {
@@ -152,6 +205,18 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
         }
 
         item { Spacer(Modifier.height(24.dp)) }
+    }
+
+    if (locationVisible) {
+        HomeFoxyCountryDialog(
+            visible = true,
+            connected = status.phase == FoxyPhase.CONNECTED ||
+                status.phase == FoxyPhase.STARTING ||
+                status.phase == FoxyPhase.AUTH ||
+                status.phase == FoxyPhase.EDGE ||
+                status.phase == FoxyPhase.TUNNEL,
+            onDismissRequest = { locationVisible = false },
+        )
     }
 
     if (loginVisible) {

@@ -98,7 +98,7 @@ The manual ClientHello fragmentation presets are adapted from [patterniha/Server
   Mozilla account (FxA) login, Guardian proxy pass/quota, Remote Settings edge list,
   Fastly MASQUE HTTP/2 CONNECT transport, Fastly challenge (PoW) solver, local SOCKS5/HTTP relay
 - License: MIT (permissive; ported into this AGPLv3 app with attribution headers preserved)
-- Upstream: https://github.com/KNG7-P/Se7en-Pro (`Se7enPro/Services/Foxy/`)
+- Upstream project: Se7en Pro — `Se7enPro/Services/Foxy/` (MIT copyright notice kept in each ported file)
 - Ported to: `app/src/main/java/com/uacspoofer/mobile/engine/foxy/`
 - Mapping and deviations: `docs/FOXY_MAPPING.md`
 - No Windows binaries or resources are redistributed; only source was translated.

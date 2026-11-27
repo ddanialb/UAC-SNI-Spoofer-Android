@@ -125,6 +125,38 @@ class FoxyScreenshotTest {
     }
 
     @Test
+    fun foxyCountryScreenEnglish() {
+        rule.setContent {
+            CompositionLocalProvider(LocalHomePersian provides false) {
+                UacSniSpooferTheme { FoxyCountryScreen(onMenuClick = {}) }
+            }
+        }
+        runCatching {
+            rule.waitUntil(timeoutMillis = 20_000) {
+                rule.onAllNodesWithText("Germany", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        rule.waitForIdle()
+        com.github.takahirom.roborazzi.captureScreenRoboImage("build/screenshots/foxy_location_en.png")
+    }
+
+    @Test
+    fun foxyCountryScreenPersian() {
+        rule.setContent {
+            CompositionLocalProvider(LocalHomePersian provides true) {
+                UacSniSpooferTheme { FoxyCountryScreen(onMenuClick = {}) }
+            }
+        }
+        runCatching {
+            rule.waitUntil(timeoutMillis = 20_000) {
+                rule.onAllNodesWithText("آلمان", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        rule.waitForIdle()
+        com.github.takahirom.roborazzi.captureScreenRoboImage("build/screenshots/foxy_location_fa.png")
+    }
+
+    @Test
     fun foxyLivePathPersian() {
         render("foxy_live_path_fa", persian = true) {
             Box(Modifier.fillMaxSize().padding(16.dp)) { FoxyLiveFlowContent() }

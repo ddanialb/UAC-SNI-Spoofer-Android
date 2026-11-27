@@ -40,10 +40,12 @@ class AiCleanHopTest {
         // every rule that existed before is still present and the AI rule precedes the catch-all
         assertTrue(withHop.contains("\"outboundTag\":\"dns-out\""))
         assertTrue(withHop.contains("\"inboundTag\":[\"dns-query\"],\"outboundTag\":\"proxy\""))
-        assertTrue(withHop.contains("\"inboundTag\":[\"socks-in\"],\"network\":\"tcp,udp\",\"outboundTag\":\"probe-proxy\""))
+        // Native TUN mode adds tun-in to the inbound list, so match the rule by its tail.
+        assertTrue(withHop.contains("\"network\":\"tcp,udp\",\"outboundTag\":\"probe-proxy\""))
+        assertTrue(withHop.contains("\"inboundTag\":[\"socks-in\",\"tun-in\"]"))
         assertTrue(
             withHop.indexOf("\"outboundTag\":\"ai-out\"") <
-                withHop.indexOf("\"inboundTag\":[\"socks-in\"],\"network\":\"tcp,udp\""),
+                withHop.indexOf("\"outboundTag\":\"probe-proxy\""),
         )
     }
 

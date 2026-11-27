@@ -49,10 +49,13 @@ class TorRcWriterTest {
             webtunnelPlugin = null,
             bridges = emptyList(),
         )
-        assertTrue(rc.contains("SocksPort 127.0.0.1:19050"))
-        assertTrue(rc.contains("IsolateDestAddr"))
+        // The daemon listens on the user port + the 10-port split offset, not on 19050 directly.
+        assertTrue(
+            rc.contains("SocksPort 127.0.0.1:${TorEngineSettings.DEFAULT.daemonSocksPort}"),
+        )
         assertTrue(rc.contains("LearnCircuitBuildTimeout 1"))
-        assertTrue(rc.contains("ControlPort 127.0.0.1:19051"))
+        assertTrue(rc.contains("IsolateDestAddr"))
+        assertTrue(rc.contains("ControlPort 127.0.0.1:${TorEngineSettings.DEFAULT.controlPort}"))
         assertTrue(rc.contains("ClientOnly 1"))
         assertTrue(rc.contains("RunAsDaemon 0"))
         assertFalse(rc.contains("Sandbox"))
@@ -61,6 +64,7 @@ class TorRcWriterTest {
         assertFalse(rc.contains("OwningControllerProcess"))
         assertFalse(rc.contains("UseBridges"))
         assertFalse(rc.contains("ClientTransportPlugin"))
+        // Default settings fragment the WebTunnel hop, so the comment must be present.
         assertTrue(rc.contains("uac-webtunnel-fragment"))
     }
 

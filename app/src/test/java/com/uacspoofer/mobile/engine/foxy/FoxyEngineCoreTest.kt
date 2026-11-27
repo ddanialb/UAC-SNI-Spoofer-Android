@@ -11,6 +11,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetAddress
 
 class FxaCryptoTest {
     @Test
@@ -246,6 +247,16 @@ class FoxyTunRelayConfigTest {
     }
 
     @Test
+    fun yamlFollowsTheGlobalUdpSetting() {
+        // The user's global UDP switch decides the timeout: enabled keeps the normal value,
+        // disabled makes QUIC fail fast and fall back to TCP.
+        val udpOn = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060, blockUdp = false)
+        assertTrue(udpOn.contains("udp-read-write-timeout: ${FoxyTunRelayConfig.UDP_TIMEOUT_MS}"))
+        val udpOff = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060, blockUdp = true)
+        assertTrue(udpOff.contains("udp-read-write-timeout: ${FoxyTunRelayConfig.UDP_BLOCKED_TIMEOUT_MS}"))
+    }
+
+    @Test
     fun yamlBlocksUdpBecauseSocksIsTcpOnly() {
         val yaml = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060)
         assertTrue(yaml.contains("port: 19060"))
@@ -254,18 +265,80 @@ class FoxyTunRelayConfigTest {
     }
 }
 
+class FoxyNetworkMergeTest {
+    @Test
+    fun mergesEverySourceAndDropsBogons() {
+        val system = arrayOf(InetAddress.getByName("23.235.42.8"), InetAddress.getByName("192.168.1.5"))
+        val doh = arrayOf(InetAddress.getByName("23.235.42.8"), InetAddress.getByName("151.101.1.91"))
+        val pinned = arrayOf(InetAddress.getByName("23.235.42.11"))
+        val merged = FoxyNetwork.mergeAddressSources(system, doh, pinned).map { it.hostAddress }
+        // Duplicates collapse, the private address never reaches the dialler, order is preserved.
+        assertEquals(listOf("23.235.42.8", "151.101.1.91", "23.235.42.11"), merged)
+        assertEquals(0, FoxyNetwork.mergeAddressSources(null, emptyArray()).size)
+    }
+}
+
 class FoxyAccountTest {
     @Test
-    fun freshAccountStartsWithFullFiftyGigabyteQuota() {
+    fun freshAccountHasNoInventedQuota() {
+        // Regression: a new account used to claim 50 GB of remaining traffic that Mozilla never
+        // reported. Nothing may be shown until the API returns a real number.
         val account = FoxyAccount(email = "a@b.c")
-        assertEquals(FoxyAccount.DEFAULT_QUOTA_BYTES, account.quotaLimitBytes)
-        assertEquals(account.quotaLimitBytes, account.quotaRemainingBytes)
-        assertEquals(0.0, account.quotaUsedPercentage, 0.001)
-        assertEquals(100.0, account.quotaRemainingPercentage, 0.001)
-        assertTrue(account.quotaDisplay.isNotEmpty())
+        assertEquals(0L, account.quotaLimitBytes)
+        assertEquals(0L, account.quotaRemainingBytes)
+        assertFalse(account.hasQuotaData)
+        assertEquals("", account.quotaSummaryText)
+        assertEquals("", account.quotaRemainingDisplay)
+        assertEquals("", account.quotaDisplay)
         assertFalse(account.hasQuotaError)
         // A freshly added account has no tokens until Guardian hands out a proxy pass.
         assertFalse(account.hasUsableCredentials)
+    }
+
+    @Test
+    fun quotaIsShownOnlyAfterARealApiValue() {
+        val account = FoxyAccount(
+            quotaLimitBytes = 10L * 1024 * 1024 * 1024,
+            quotaRemainingBytes = 4L * 1024 * 1024 * 1024,
+            lastQuotaCheckUtc = System.currentTimeMillis(),
+        )
+        assertTrue(account.hasQuotaData)
+        assertEquals("4.00 GB of 10.00 GB remaining", account.quotaSummaryText)
+        assertEquals(40.0, account.quotaRemainingPercentage, 0.001)
+
+        // A check that returned nothing must not turn into a number either.
+        account.quotaLimitBytes = 0L
+        assertFalse(account.hasQuotaData)
+        assertEquals("", account.quotaSummaryText)
+    }
+
+    @Test
+    fun usageParserAcceptsTheShapesTheApiHasUsed() {
+        val plain = GuardianClient.parseUsage(
+            org.json.JSONObject("""{"quota_limit":10737418240,"quota_remaining":5368709120}"""),
+        )
+        assertEquals(10L * 1024 * 1024 * 1024, plain.limit)
+        assertEquals(5L * 1024 * 1024 * 1024, plain.remaining)
+
+        val nested = GuardianClient.parseUsage(
+            org.json.JSONObject("""{"quota":{"limit":1000,"remaining":400,"reset_at":1700000000}}"""),
+        )
+        assertEquals(1000L, nested.limit)
+        assertEquals(400L, nested.remaining)
+        assertEquals(1_700_000_000L, nested.reset)
+
+        // Only "used" is known: the limit is derived, and remaining is derived back when needed.
+        val usedOnly = GuardianClient.parseUsage(org.json.JSONObject("""{"used_bytes":250,"limit":1000}"""))
+        assertEquals(1000L, usedOnly.limit)
+        assertEquals(750L, usedOnly.remaining)
+
+        // Strings are accepted, unknown payloads stay unknown instead of defaulting to 50 GB.
+        val asText = GuardianClient.parseUsage(org.json.JSONObject("""{"remaining":"2048"}"""))
+        assertEquals(2048L, asText.remaining)
+        assertEquals(null, asText.limit)
+        val empty = GuardianClient.parseUsage(org.json.JSONObject("{}"))
+        assertEquals(null, empty.limit)
+        assertEquals(null, empty.remaining)
     }
 
     @Test

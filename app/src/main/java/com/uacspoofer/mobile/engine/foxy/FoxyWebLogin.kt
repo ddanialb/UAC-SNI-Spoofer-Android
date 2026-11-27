@@ -115,6 +115,15 @@ object FoxyWebLogin {
         }
     }
 
+    /**
+     * Returns the authorisation code if [rawUrl] is one of the redirect hops Mozilla uses,
+     * otherwise null. Single entry point so the WebView hooks and the tests agree.
+     */
+    fun captureCode(rawUrl: String?): String? {
+        if (!isLoginCallback(rawUrl)) return null
+        return extractAuthCode(rawUrl)
+    }
+
     /** Pulls the `code` parameter out of the deep link / redirect URL. */
     fun extractAuthCode(rawUrl: String?): String? {
         if (rawUrl.isNullOrBlank()) return null

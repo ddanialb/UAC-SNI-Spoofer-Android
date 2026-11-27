@@ -62,6 +62,8 @@ import com.uacspoofer.mobile.engine.foxy.FoxyAccount
 import com.uacspoofer.mobile.engine.foxy.FoxyAccountStore
 import com.uacspoofer.mobile.engine.foxy.FoxyWebLogin
 import com.uacspoofer.mobile.ui.theme.UacColors
+import com.uacspoofer.mobile.logging.AppLogRepository
+import com.uacspoofer.mobile.logging.LogSource
 import kotlinx.coroutines.launch
 
 /**
@@ -89,6 +91,7 @@ internal fun FoxyWebLoginDialog(
 
     fun submitCode(code: String) {
         if (claimedCode) return
+        AppLogRepository.info(LogSource.APP, "Foxy: captured Mozilla authorisation code, exchanging it")
         claimedCode = true
         busy = true
         error = ""
@@ -215,31 +218,49 @@ internal fun FoxyWebLoginDialog(
                             override fun shouldOverrideUrlLoading(
                                 view: WebView,
                                 request: WebResourceRequest,
-                            ): Boolean = handleUrl(request.url.toString())
+                            ): Boolean = claimFromUrl(view, request.url.toString())
 
                             @Suppress("DEPRECATION")
                             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-                                handleUrl(url)
+                                claimFromUrl(view, url)
+
+                            /**
+                             * FxA answers with an HTTP 302 to
+                             * https://vpn.mozilla.org/oauth/success?code=… and the WebView follows
+                             * redirects internally, so onPageStarted/shouldOverrideUrlLoading are not
+                             * guaranteed to see it. shouldInterceptRequest fires for every main-frame
+                             * load, redirect hops included — this is the reliable hook.
+                             */
+                            override fun shouldInterceptRequest(
+                                view: WebView,
+                                request: WebResourceRequest,
+                            ): android.webkit.WebResourceResponse? {
+                                if (request.isForMainFrame) {
+                                    val url = request.url.toString()
+                                    view.post { claimFromUrl(view, url) }
+                                }
+                                return null
+                            }
 
                             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                                url?.let { handleUrl(it) }
+                                url?.let { claimFromUrl(view, it) }
                             }
 
                             override fun onPageFinished(view: WebView, url: String?) {
                                 progress = 1f
+                                url?.let { claimFromUrl(view, it) }
                             }
 
-                            private fun handleUrl(raw: String): Boolean {
-                                if (!FoxyWebLogin.isLoginCallback(raw)) return false
-                                val code = FoxyWebLogin.extractAuthCode(raw)
-                                if (code.isNullOrBlank()) {
-                                    error = homeText(
-                                        persian,
-                                        "Mozilla returned without an authorisation code. Try again.",
-                                        "موزیلا بدون کد ورود برگشت. دوباره تلاش کن.",
-                                    )
-                                    return true
-                                }
+                            override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                                url?.let { claimFromUrl(view, it) }
+                            }
+
+                            private fun claimFromUrl(view: WebView, raw: String): Boolean {
+                                if (!raw.startsWith("http") && !raw.startsWith("mozilla-vpn")) return false
+                                val code = FoxyWebLogin.captureCode(raw)
+                                if (code.isNullOrBlank()) return false
+                                if (busy || claimedCode) return false
+                                runCatching { view.stopLoading() }
                                 submitCode(code)
                                 return true
                             }

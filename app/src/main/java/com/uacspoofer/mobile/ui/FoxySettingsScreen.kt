@@ -9,6 +9,7 @@ package com.uacspoofer.mobile.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Route
@@ -44,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +58,7 @@ import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.SettingsEthernet
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.TravelExplore
 import com.uacspoofer.mobile.engine.foxy.FoxyEngineSettings
 import com.uacspoofer.mobile.engine.foxy.FoxyAccount
@@ -79,7 +83,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     val helloSplitChoices = listOf(
         PowMenuChoice(
             FoxyEngineSettings.HELLO_SPLIT_SNI,
-            homeText("Split at SNI (recommended)", "تقسیم روی SNI (پیشنهادی)"),
+            homeText("SNI split (best)", "تقسیم SNI (بهترین)"),
             homeText("Three TCP segments around the server name.", "سه تکه، درست دور نام سرور."),
         ),
         PowMenuChoice(
@@ -118,10 +122,14 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             FoxyLiveFlowButton(accent = accent, onClick = { flowVisible = true })
         }
 
-        item { FoxySectionTitle(homeText("Connection", "اتصال")) }
-
         item {
-            FoxyCard {
+            FoxySection(
+                icon = Icons.Outlined.Route,
+                title = homeText("Connection", "اتصال"),
+                summary = homeText("Split mode · edge attempts · PING", "حالت تقسیم · تعداد تلاش · پینگ"),
+                accent = accent,
+                initiallyExpanded = true,
+            ) {
                 PowPickerRow(
                     icon = Icons.Outlined.Shield,
                     label = homeText("TLS hello split", "تقسیم هلو TLS"),
@@ -129,10 +137,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                     choices = helloSplitChoices,
                     selectedId = engineSettings.helloSplit,
                     accent = accent,
-                    subtitle = homeText(
-                        "Fragments the ClientHello so DPI cannot read the mozilla SNI",
-                        "هندشیک اولیه را تکه‌تکه می‌فرستد تا DPI نام دامنه را نبیند",
-                    ),
+                    subtitle = homeText("Hides the Mozilla SNI from DPI", "نام سرور موزیلا را از DPI پنهان می‌کند"),
                     onSelect = { id -> engineStore.save(engineSettings.copy(helloSplit = id)) },
                 )
                 PowRowDivider()
@@ -143,10 +148,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                     choices = attemptChoices,
                     selectedId = engineSettings.edgeAttempts.toString(),
                     accent = accent,
-                    subtitle = homeText(
-                        "More attempts survive flaky carriers",
-                        "تلاش بیشتر یعنی شانس بالاتر روی شبکه‌های شلوغ",
-                    ),
+                    subtitle = homeText("Higher = survives flaky carriers", "بیشتر = شانس بالاتر روی شبکه‌های شلوغ"),
                     onSelect = { id ->
                         engineStore.save(engineSettings.copy(edgeAttempts = id.toIntOrNull() ?: 6))
                     },
@@ -155,10 +157,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                 PowSwitchRow(
                     icon = Icons.Outlined.TravelExplore,
                     title = homeText("Prefer IPv4", "اولویت IPv4"),
-                    subtitle = homeText(
-                        "Avoids ENETUNREACH on IPv4-only mobile networks",
-                        "جلوگیری از خطای ENETUNREACH روی شبکه‌های فقط IPv4",
-                    ),
+                    subtitle = homeText("Stops ENETUNREACH on mobile data", "خطای ENETUNREACH را روی داده موبایل رفع می‌کند"),
                     checked = engineSettings.preferIpv4,
                     accent = accent,
                     onCheckedChange = { engineStore.save(engineSettings.copy(preferIpv4 = it)) },
@@ -167,10 +166,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                 PowSwitchRow(
                     icon = Icons.Outlined.Favorite,
                     title = homeText("Keep-alive PING", "پینگ نگه‌دارنده"),
-                    subtitle = homeText(
-                        "Detects a silently dead edge in 30 seconds",
-                        "سرور مرده را در ۳۰ ثانیه تشخیص می‌دهد",
-                    ),
+                    subtitle = homeText("Detects a dead edge in 30s", "سرور مرده را در ۳۰ ثانیه می‌فهمد"),
                     checked = engineSettings.keepAlive,
                     accent = accent,
                     onCheckedChange = { engineStore.save(engineSettings.copy(keepAlive = it)) },
@@ -179,10 +175,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                 PowSwitchRow(
                     icon = Icons.Outlined.Bolt,
                     title = homeText("Auto reconnect", "اتصال خودکار مجدد"),
-                    subtitle = homeText(
-                        "Reconnects when the edge drops the tunnel",
-                        "اگر تونل قطع شد خودش دوباره وصل می‌کند",
-                    ),
+                    subtitle = homeText("Reconnects if the tunnel drops", "اگر تونل قطع شد خودش وصل می‌شود"),
                     checked = engineSettings.autoReconnect,
                     accent = accent,
                     onCheckedChange = { engineStore.save(engineSettings.copy(autoReconnect = it)) },
@@ -190,17 +183,17 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             }
         }
 
-        item { FoxySectionTitle(homeText("Advanced", "پیشرفته")) }
-
         item {
-            FoxyCard {
+            FoxySection(
+                icon = Icons.Outlined.Tune,
+                title = homeText("Advanced", "پیشرفته"),
+                summary = homeText("Proxy, session pool, SOCKS port", "پروکسی، استخر نشست، پورت SOCKS"),
+                accent = accent,
+            ) {
                 PowSwitchRow(
                     icon = Icons.Outlined.Hub,
                     title = homeText("Upstream proxy", "پروکسی بالادست"),
-                    subtitle = homeText(
-                        "Dial the edge through your own SOCKS/HTTP proxy",
-                        "اتصال به سرور از طریق پروکسی خودت (SOCKS یا HTTP)",
-                    ),
+                    subtitle = homeText("Dial the edge through your proxy", "اتصال به سرور از طریق پروکسی خودت"),
                     checked = engineSettings.customProxyEnabled,
                     accent = accent,
                     onCheckedChange = { on ->
@@ -236,10 +229,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                 PowSwitchRow(
                     icon = Icons.Outlined.Layers,
                     title = homeText("Session pool", "استخر نشست"),
-                    subtitle = homeText(
-                        "Keeps a second edge warm so a drop is invisible",
-                        "یک سرور دوم آماده نگه می‌دارد تا قطعی حس نشود",
-                    ),
+                    subtitle = homeText("Keeps a second edge warm", "یک سرور دوم آماده نگه می‌دارد"),
                     checked = engineSettings.dualSessionPool,
                     accent = accent,
                     onCheckedChange = { engineStore.save(engineSettings.copy(dualSessionPool = it)) },
@@ -254,51 +244,66 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                     },
                     selectedId = engineSettings.socksPort.toString(),
                     accent = accent,
-                    subtitle = homeText(
-                        "Where apps and LAN share reach the tunnel",
-                        "جایی که برنامه‌ها و اشتراک LAN به تونل می‌رسند",
-                    ),
+                    subtitle = homeText("Port apps and LAN share use", "پورتی که برنامه‌ها و LAN استفاده می‌کنند"),
                     onSelect = { id -> engineStore.save(engineSettings.copy(socksPort = id.toIntOrNull() ?: 19_060)) },
                 )
             }
         }
 
-        item { FoxySectionTitle(homeText("Firefox account", "حساب فایرفاکس")) }
-
-        if (accounts.isEmpty()) {
-            item {
-                FoxyCard {
+        item {
+            FoxySection(
+                icon = Icons.Outlined.Login,
+                title = homeText("Firefox account", "حساب فایرفاکس"),
+                summary = if (accounts.isEmpty()) {
+                    homeText("Sign in once for the free quota", "یک بار وارد شو تا سهمیهٔ رایگان فعال شود")
+                } else {
+                    homeLtr("${accounts.size} · ${accounts.firstOrNull { it.isActive }?.email ?: accounts.first().email}")
+                },
+                accent = accent,
+                initiallyExpanded = true,
+            ) {
+                if (accounts.isEmpty()) {
+                    FoxyCard {
+                        Text(
+                            homeText(
+                                "Sign in once to use the free Mozilla VPN quota (50 GB per account).",
+                                "یک بار وارد شو تا از سهمیهٔ رایگان Mozilla VPN استفاده کنی (۵۰ گیگ برای هر حساب).",
+                            ),
+                            color = UacColors.TextSecondary,
+                            fontSize = 11.5.sp,
+                            lineHeight = PowHintLine,
+                        )
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(PowGap)) {
+                        accounts.forEach { account ->
+                            FoxyAccountRow(
+                                account = account,
+                                isActive = account.isActive,
+                                accent = accent,
+                                onSetActive = { accountStore.setActive(account) },
+                                onRemove = { accountStore.remove(account) },
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(PowGap))
+                Button(
+                    onClick = { loginVisible = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = accent),
+                ) {
+                    Icon(Icons.Outlined.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.size(6.dp))
                     Text(
-                        homeText(
-                            "Sign in once to use the free Mozilla VPN quota (50 GB per account).",
-                            "یک بار وارد شو تا از سهمیهٔ رایگان Mozilla VPN استفاده کنی (۵۰ گیگ برای هر حساب).",
-                        ),
-                        color = UacColors.TextSecondary,
-                        fontSize = 11.5.sp,
-                        lineHeight = PowHintLine,
+                        if (accounts.isEmpty()) {
+                            homeText("Sign in with Firefox", "ورود با حساب فایرفاکس")
+                        } else {
+                            homeText("Add another account", "افزودن حساب دیگر")
+                        },
+                        fontSize = 13.sp,
                     )
                 }
-            }
-        } else {
-            foxyAccountRows(accounts, accent, accountStore)
-        }
-
-        item {
-            Button(
-                onClick = { loginVisible = true },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = accent),
-            ) {
-                Icon(Icons.Outlined.Login, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.size(6.dp))
-                Text(
-                    if (accounts.isEmpty()) {
-                        homeText("Sign in with Firefox", "ورود با حساب فایرفاکس")
-                    } else {
-                        homeText("Add another account", "افزودن حساب دیگر")
-                    },
-                    fontSize = 13.sp,
-                )
             }
         }
 
@@ -328,6 +333,75 @@ private fun LazyListScope.foxyAccountRows(
             onSetActive = { accountStore.setActive(account) },
             onRemove = { accountStore.remove(account) },
         )
+    }
+}
+
+/**
+ * Collapsible section card, same interaction as the Tor settings page: the header row opens
+ * and closes the body, and the body animates in.
+ */
+@Composable
+private fun FoxySection(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    summary: String,
+    accent: Color,
+    initiallyExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(title) {
+        androidx.compose.runtime.mutableStateOf(initiallyExpanded)
+    }
+    val chevron by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(260),
+        label = "foxySectionChevron",
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PowSheetColor, PowShape)
+            .border(
+                1.dp,
+                if (expanded) accent.copy(alpha = 0.35f) else PowBorder,
+                PowShape,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = PowPad, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PowGap),
+        ) {
+            PowIconTile(icon, accent)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    color = UacColors.TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Text(
+                    homeLatinDigits(summary),
+                    color = UacColors.TextSecondary,
+                    fontSize = 11.5.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.Outlined.ExpandMore,
+                contentDescription = null,
+                tint = if (expanded) accent else UacColors.TextSecondary,
+                modifier = Modifier.size(22.dp).rotate(chevron),
+            )
+        }
+        androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+            Column(modifier = Modifier.fillMaxWidth(), content = content)
+        }
     }
 }
 

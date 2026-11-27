@@ -1095,7 +1095,10 @@ private fun SelectedProfileRow(
             if (code.isBlank() || code == "REC") {
                 homeText("Automatic", "خودکار")
             } else {
-                CountryMetadata.resolve(code, null).countryName
+                com.uacspoofer.mobile.engine.pow.PowRegions.name(
+                    code,
+                    if (isPersian) Locale("fa") else Locale.ENGLISH,
+                )
             }
         }
         engineMode.isDirect -> when {

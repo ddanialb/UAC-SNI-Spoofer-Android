@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,6 +65,29 @@ internal fun HomeFoxyCountryDialog(
     val settings by store.settings.collectAsStateWithLifecycle()
     var countries by remember { mutableStateOf<List<VpnCountry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var query by remember { mutableStateOf("") }
+    val persian = LocalHomePersian.current
+    val locale = remember(persian) { if (persian) java.util.Locale("fa") else java.util.Locale.ENGLISH }
+    // Same ordering as the PoW/Tor pickers: alphabetical in the user's language.
+    val sorted = remember(countries, locale) {
+        // Mozilla's own list carries a "Recomended Location" REC record; the pinned row above
+        // already covers that, so drop it here instead of showing it twice.
+        countries
+            .filterNot { it.code.equals("REC", ignoreCase = true) }
+            .sortedBy { com.uacspoofer.mobile.engine.pow.PowRegions.name(it.code, locale).lowercase(locale) }
+    }
+    val filtered = remember(sorted, query, locale) {
+        if (query.isBlank()) {
+            sorted
+        } else {
+            sorted.filter { country ->
+                val name = com.uacspoofer.mobile.engine.pow.PowRegions.name(country.code, locale)
+                name.contains(query.trim(), true) ||
+                    country.name.contains(query.trim(), true) ||
+                    country.code.contains(query.trim(), true)
+            }
+        }
+    }
 
     LaunchedEffect(visible) {
         if (!visible) return@LaunchedEffect
@@ -103,6 +127,9 @@ internal fun HomeFoxyCountryDialog(
                 },
             )
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(PowBorder))
+            if (!loading) {
+                FoxyCountrySearch(query = query, onQueryChange = { query = it })
+            }
             if (loading) {
                 Text(
                     homeText("Loading Mozilla's server list…", "در حال دریافت فهرست سرورهای موزیلا…"),
@@ -112,10 +139,10 @@ internal fun HomeFoxyCountryDialog(
                 )
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    itemsIndexed(countries, key = { _, item -> item.code }) { _, country ->
+                    itemsIndexed(filtered, key = { _, item -> item.code }) { _, country ->
                         FoxyCountryRow(
                             code = country.code,
-                            name = country.name,
+                            name = localizedCountryName(country.code, country.name),
                             selected = settings.serverCountry.equals(country.code, ignoreCase = true),
                             enabled = !connected,
                             onClick = {
@@ -127,6 +154,51 @@ internal fun HomeFoxyCountryDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FoxyCountrySearch(query: String, onQueryChange: (String) -> Unit) {
+    val accent = UacColors.DisconnectedBlue
+    androidx.compose.material3.OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        singleLine = true,
+        leadingIcon = {
+            Icon(
+                Icons.Outlined.Search,
+                contentDescription = null,
+                tint = UacColors.TextSecondary,
+                modifier = Modifier.size(17.dp),
+            )
+        },
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.5.sp, color = UacColors.TextPrimary),
+        placeholder = {
+            Text(
+                homeText("Search country", "جستجوی کشور"),
+                color = UacColors.TextSecondary,
+                fontSize = 12.sp,
+            )
+        },
+        shape = RoundedCornerShape(10.dp),
+        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = accent,
+            unfocusedBorderColor = PowBorder,
+            cursorColor = accent,
+        ),
+    )
+}
+
+/** Same naming as the PoW/Tor pickers: Persian shows آلمان, English shows Germany. */
+@Composable
+private fun localizedCountryName(code: String, fallback: String): String {
+    val persian = LocalHomePersian.current
+    return remember(code, fallback, persian) {
+        val locale = if (persian) java.util.Locale("fa") else java.util.Locale.ENGLISH
+        com.uacspoofer.mobile.engine.pow.PowRegions.name(code, locale).ifBlank { fallback }
     }
 }
 

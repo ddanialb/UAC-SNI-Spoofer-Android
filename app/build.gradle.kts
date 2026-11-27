@@ -24,6 +24,13 @@ if (gpsMockTest) {
 }
 
 android {
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all { it.systemProperty("roborazzi.test.record", "true") }
+        }
+    }
+
     namespace = "com.uacspoofer.mobile"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
@@ -33,8 +40,8 @@ android {
         applicationId = "com.uacspoofer.mobile"
         minSdk = 24
         targetSdk = 35
-        versionCode = 700
-        versionName = "2.2.0-foxy7"
+        versionCode = 800
+        versionName = "2.3.0-foxy8"
 
         buildConfigField("boolean", "TV_MODE", "false")
         buildConfigField("boolean", "GPS_MOCK_TEST", "false")
@@ -334,6 +341,15 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+
+    // Screenshot rendering of real Compose screens on the JVM (no emulator available here).
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
 }
 
 val nativeCoreAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")

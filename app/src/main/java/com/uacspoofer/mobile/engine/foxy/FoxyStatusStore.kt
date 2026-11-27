@@ -18,6 +18,10 @@ data class FoxyUiStatus(
     val countryCode: String = "",
     val exitIp: String = "",
     val steps: List<FoxyStep> = emptyList(),
+    /** Wall clock when the current attempt started (0 = never connected). */
+    val startedAt: Long = 0L,
+    /** Wall clock when the attempt finished (0 = still running). */
+    val endedAt: Long = 0L,
 ) {
     companion object {
         val Idle = FoxyUiStatus()
@@ -37,6 +41,15 @@ object FoxyStatusStore {
         exitIp: String = mutableStatus.value.exitIp,
     ) {
         val current = mutableStatus.value
+        val startedAt = when {
+            phase == FoxyPhase.STARTING -> System.currentTimeMillis()
+            current.startedAt != 0L -> current.startedAt
+            else -> 0L
+        }
+        val endedAt = when (phase) {
+            FoxyPhase.CONNECTED, FoxyPhase.FAILED -> System.currentTimeMillis()
+            else -> 0L
+        }
         mutableStatus.value = FoxyUiStatus(
             phase = phase,
             progressPercent = progressPercent.coerceIn(0, 100),
@@ -45,6 +58,8 @@ object FoxyStatusStore {
             countryCode = countryCode,
             exitIp = exitIp,
             steps = current.steps,
+            startedAt = startedAt,
+            endedAt = endedAt,
         )
         if (detail.isNotBlank()) note(detail)
         if (phase == FoxyPhase.CONNECTED) finish(FoxyStepState.DONE)

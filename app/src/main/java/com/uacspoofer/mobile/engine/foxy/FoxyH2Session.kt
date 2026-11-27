@@ -114,8 +114,9 @@ class FoxyH2Session(
 
         // Wrap so the ClientHello leaves in several TCP segments (SNI hiding).
         val transport: Socket = if (helloSplitMode == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, helloSplitMode)
-        val defaultFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
-        val ssl = defaultFactory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
+        // Device trust store + the public roots the Fastly edges chain to (see FoxyTrust).
+        val factory = FoxyTrust.socketFactory
+        val ssl = factory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
         ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
         setAlpn(ssl, arrayOf("h2"))
         ssl.startHandshake()

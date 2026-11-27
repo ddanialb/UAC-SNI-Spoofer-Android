@@ -45,6 +45,8 @@ class FoxyH2Session(
     private val preferIpv4: Boolean = true,
     /** Send PING frames so a silently-dead edge is detected. */
     private val keepAliveEnabled: Boolean = true,
+    /** Test seam: lets the fake-edge tunnel test terminate TLS with its own certificate. */
+    private val socketFactoryOverride: SSLSocketFactory? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
@@ -118,7 +120,7 @@ class FoxyH2Session(
         // Wrap so the ClientHello leaves in several TCP segments (SNI hiding).
         val transport: Socket = if (helloSplitMode == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, helloSplitMode)
         // Device trust store + the public roots the Fastly edges chain to (see FoxyTrust).
-        val factory = FoxyTrust.socketFactory
+        val factory = socketFactoryOverride ?: FoxyTrust.socketFactory
         val ssl = factory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
         ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
         setAlpn(ssl, arrayOf("h2"))

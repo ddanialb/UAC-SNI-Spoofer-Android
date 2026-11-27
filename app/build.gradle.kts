@@ -27,7 +27,11 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
-            all { it.systemProperty("roborazzi.test.record", "true") }
+            all {
+                it.systemProperty("roborazzi.test.record", "true")
+                // The fake-edge tunnel test runs a Conscrypt TLS server on the test JVM.
+                it.jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+            }
         }
     }
 

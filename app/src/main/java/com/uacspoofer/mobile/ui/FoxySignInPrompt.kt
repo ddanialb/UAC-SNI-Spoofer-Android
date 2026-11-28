@@ -17,7 +17,9 @@ import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,7 +43,9 @@ internal fun FoxySignInPrompt(
     // This prompt is shown from the Activity, above MainScreen, so LocalHomePersian is not
     // provided here — read the language from the store instead of silently falling back to English.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val persian = remember { LanguageStore.get(context).snapshot() == DrawerLanguage.PERSIAN }
+    val languageStore = remember(context) { LanguageStore.get(context) }
+    val language by languageStore.language.collectAsStateWithLifecycle()
+    val persian = language == DrawerLanguage.PERSIAN
     val font = if (persian) VazirmatnUiFd else null
     val accent = UacColors.DisconnectedBlue
     Dialog(
@@ -81,12 +85,15 @@ internal fun FoxySignInPrompt(
                 )
             }
             Text(
-                homeText(
+                // Explicit strings, not homeText(): this prompt is composed above MainScreen, where
+                // LocalHomePersian is not provided, and that silently produced English here.
+                if (persian) {
+                    "Foxy از سرورهای خودِ موزیلا عبور می‌کند، پس به حساب فایرفاکس نیاز دارد. " +
+                        "وارد شو، یا همان‌جا یک حساب رایگان بساز."
+                } else {
                     "Foxy connects through Mozilla's own VPN servers, so it needs a Firefox account. " +
-                        "Sign in, or create one for free in the app.",
-                    "Foxy از سرورهای خود موزیلا عبور می‌کند و به حساب فایرفاکس نیاز دارد. " +
-                        "وارد شو، یا همان‌جا یک حساب رایگان بساز.",
-                ),
+                        "Sign in, or create one for free in the app."
+                },
                 color = UacColors.TextSecondary,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
@@ -99,22 +106,16 @@ internal fun FoxySignInPrompt(
                 PromptButton(
                     label = if (persian) "فعلاً نه" else "Not now",
                     primary = false,
+                    fontFamily = font,
                     onClick = onDismiss,
                     modifier = Modifier.weight(1f),
                 )
                 PromptButton(
                     label = if (persian) "ورود" else "Sign in",
                     primary = true,
+                    fontFamily = font,
                     onClick = onContinue,
                     modifier = Modifier.weight(1f),
-                )
-            }
-            if (persian) {
-                Text(
-                    "می‌توانی بعداً از تنظیمات Foxy هم وارد شوی.",
-                    color = UacColors.TextSecondary.copy(alpha = 0.75f),
-                    fontSize = 10.5.sp,
-                    fontFamily = font,
                 )
             }
         }
@@ -127,6 +128,7 @@ private fun PromptButton(
     primary: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    fontFamily: androidx.compose.ui.text.font.FontFamily? = null,
 ) {
     val accent = UacColors.DisconnectedBlue
     Box(
@@ -147,6 +149,7 @@ private fun PromptButton(
             color = if (primary) UacColors.TextPrimary else UacColors.TextSecondary,
             fontSize = 12.5.sp,
             fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal,
+            fontFamily = fontFamily,
         )
     }
 }

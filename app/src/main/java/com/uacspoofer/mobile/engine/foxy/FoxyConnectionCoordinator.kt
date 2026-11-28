@@ -70,6 +70,17 @@ class FoxyConnectionCoordinator(
     /** Port the current session's SOCKS listener is really on (0 when none). */
     fun liveSocksPort(): Int = socksServer?.socksPort ?: 0
 
+    /**
+     * Pause/resume for Foxy. Called synchronously from the service so the effect is immediate:
+     * live relayed connections are dropped (they were still flowing through the tunnel) and every
+     * new one dials the destination directly until resume.
+     */
+    fun onPauseChanged(paused: Boolean) {
+        runCatching {
+            socksServer?.dropLiveConnections(if (paused) "tunnel paused" else "tunnel resumed")
+        }
+    }
+
     /** Port the current session's HTTP relay is really on (0 when none). */
     fun liveHttpPort(): Int = socksServer?.httpPort ?: 0
 
@@ -371,7 +382,7 @@ class FoxyConnectionCoordinator(
                             avoidAddress,
                             service as? VpnService,
                             settings.helloSplitMode(),
-                            settings.preferIpv4,
+                            settings.ipMode,
                             settings.keepAlive,
                         )
                         session.connect()
@@ -405,7 +416,7 @@ class FoxyConnectionCoordinator(
                     avoidAddress,
                     service as? VpnService,
                     settings.helloSplitMode(),
-                    settings.preferIpv4,
+                    settings.ipMode,
                     settings.keepAlive,
                 )
                 edge.connect()
@@ -608,6 +619,10 @@ class FoxyConnectionCoordinator(
             onBytes = { sent, received -> bytesSent.set(sent); bytesReceived.set(received) },
             // Pause must work for Foxy too: while paused the relays dial the destination directly.
             bypassTunnel = { com.uacspoofer.mobile.vpn.VpnPauseStore.isPaused() },
+            // ...and directly means outside the tunnel, so the socket must be excluded from it.
+            protectSocket = { socket ->
+                (service as? VpnService)?.let { runCatching { it.protect(socket) } }
+            },
         )
         socksServer = server
         val socksRequested = settings.socksPort

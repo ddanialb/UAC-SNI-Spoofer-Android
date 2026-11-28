@@ -91,7 +91,7 @@ class FoxyEngineLiveTest {
             avoidAddress = null,
             vpnService = null,
             helloSplitMode = HelloSplitMode.SNI,
-            preferIpv4 = true,
+            ipMode = FoxyEngineSettings.IP_AUTO,
             keepAliveEnabled = true,
         )
         session.onFailed = { reason -> println("session.onFailed: $reason") }

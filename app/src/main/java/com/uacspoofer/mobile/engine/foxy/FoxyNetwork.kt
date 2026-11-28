@@ -7,6 +7,8 @@
 package com.uacspoofer.mobile.engine.foxy
 
 import android.net.VpnService
+import com.uacspoofer.mobile.logging.AppLogRepository
+import com.uacspoofer.mobile.logging.LogSource
 import com.uacspoofer.mobile.vpn.SocketProtectGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -26,6 +28,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 object FoxyNetwork {
     private const val DIAL_STAGGER_MS = 300L
+    private const val DOH_TIMEOUT_MS = 3_000
+    private const val DOH_TOTAL_BUDGET_MS = 3_500L
     private const val FAILED_ADDRESS_COOLDOWN_MS = 10 * 60 * 1000L
     private val failedAddresses = ConcurrentHashMap<String, Long>()
 
@@ -133,48 +137,88 @@ object FoxyNetwork {
     }
 
     private fun tryGetPinnedAddresses(host: String): Array<InetAddress>? {
-        knownMozillaIps[host.lowercase()]?.let { return it.map { InetAddress.getByName(it) }.toTypedArray() }
-        if (host.endsWith(".fastly-masque.net", ignoreCase = true)) {
-            val ips = knownFastlyMasqueIps[host.lowercase()] ?: defaultFastlyMasqueIps
-            return ips.map { InetAddress.getByName(it) }.toTypedArray()
+        val lower = host.lowercase()
+        knownMozillaIps[lower]?.let { return it.map { InetAddress.getByName(it) }.toTypedArray() }
+        knownFastlyMasqueIps[lower]?.let { return it.map { InetAddress.getByName(it) }.toTypedArray() }
+        // Fastly serves every mozillavpn.net / fastly-masque.net edge from its anycast range and
+        // routes by SNI, so these addresses reach the right edge even when the carrier's DNS
+        // answers with a block page or with nothing at all. On Rightel the resolver handed back an
+        // address that completed TCP and then never answered TLS, which is what "stuck at the
+        // handshake" looked like; racing these anycast addresses fixes that case.
+        if (lower.endsWith(".fastly-masque.net") || lower.endsWith(".mozillavpn.net")) {
+            return defaultFastlyMasqueIps.map { InetAddress.getByName(it) }.toTypedArray()
         }
         return null
     }
 
+    /**
+     * DNS-over-HTTPS, asked of several resolvers at once.
+     *
+     * Sequentially this took up to ten seconds before the system resolver was even consulted, and
+     * on a carrier that blocks Cloudflare every attempt burned its full timeout. The endpoints are
+     * raced now; the first one that answers wins. Shecan is included on purpose: it is reachable
+     * from inside Iran, where 1.1.1.1 and dns.google are usually not.
+     */
     private fun queryDoh(host: String): Array<InetAddress> {
         val escaped = URLEncoder.encode(host, "UTF-8")
         val endpoints = listOf(
             "https://1.1.1.1/dns-query?name=$escaped&type=A",
             "https://8.8.8.8/resolve?name=$escaped&type=A",
+            "https://94.140.14.14/dns-query?name=$escaped&type=A",
+            "https://free.shecan.ir/dns-query?name=$escaped&type=A",
         )
-        for (endpoint in endpoints) {
-            try {
-                val conn = URL(endpoint).openConnection() as HttpURLConnection
-                conn.connectTimeout = 5_000
-                conn.readTimeout = 5_000
-                conn.setRequestProperty("Accept", "application/dns-json")
-                conn.setRequestProperty("User-Agent", "UAC-Foxy/1.0")
-                conn.useCaches = false
-                if (conn.responseCode != 200) continue
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(text)
-                val answer = json.optJSONArray("Answer") ?: continue
-                val out = mutableListOf<InetAddress>()
-                for (i in 0 until answer.length()) {
-                    val data = answer.optJSONObject(i)?.optString("data")?.trim() ?: continue
-                    if (data.isEmpty() || data.contains(":")) continue
-                    try {
-                        val ip = InetAddress.getByName(data)
-                        if (!isBlockPageOrBogon(ip)) out.add(ip)
-                    } catch (_: Exception) {
-                    }
-                }
-                if (out.isNotEmpty()) return out.toTypedArray()
-            } catch (_: Exception) {
-                // Try next endpoint.
-            }
+        val answers = java.util.concurrent.ConcurrentHashMap<String, Array<InetAddress>>()
+        val threads = endpoints.map { endpoint ->
+            Thread {
+                runCatching { fetchDoh(endpoint) }.getOrNull()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { answers[endpoint] = it }
+            }.apply { isDaemon = true; start() }
         }
-        return emptyArray()
+        val deadline = System.currentTimeMillis() + DOH_TOTAL_BUDGET_MS
+        while (System.currentTimeMillis() < deadline && answers.isEmpty()) {
+            Thread.sleep(50)
+        }
+        threads.forEach { runCatching { it.join(200) } }
+        val merged = mergeAddressSources(*answers.values.toTypedArray())
+        if (merged.isNotEmpty()) {
+            AppLogRepository.debug(LogSource.APP, "Foxy: DoH resolved $host to ${merged.joinToString { it.hostAddress.orEmpty() }}")
+        }
+        return merged
+    }
+
+    /** One DoH endpoint: the A answer plus, when present, the AAAA answer. */
+    private fun fetchDoh(url: String): Array<InetAddress> {
+        val a = fetchDohOnce(url)
+        val aaaa = fetchDohOnce(url.replace("type=A", "type=AAAA"))
+        return (a + aaaa).distinctBy { it.hostAddress }
+            .toTypedArray()
+    }
+
+    private fun fetchDohOnce(url: String): List<InetAddress> {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        return try {
+            conn.connectTimeout = DOH_TIMEOUT_MS
+            conn.readTimeout = DOH_TIMEOUT_MS
+            conn.setRequestProperty("Accept", "application/dns-json")
+            conn.setRequestProperty("User-Agent", "UAC-Foxy/1.0")
+            conn.useCaches = false
+            if (conn.responseCode != 200) return emptyList()
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val answer = JSONObject(text).optJSONArray("Answer") ?: return emptyList()
+            val out = mutableListOf<InetAddress>()
+            for (i in 0 until answer.length()) {
+                val data = answer.optJSONObject(i)?.optString("data")?.trim()?.trim('"') ?: continue
+                if (data.isEmpty()) continue
+                val ip = runCatching { InetAddress.getByName(data) }.getOrNull() ?: continue
+                if (!isBlockPageOrBogon(ip)) out.add(ip)
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        } finally {
+            runCatching { conn.disconnect() }
+        }
     }
 
     /**

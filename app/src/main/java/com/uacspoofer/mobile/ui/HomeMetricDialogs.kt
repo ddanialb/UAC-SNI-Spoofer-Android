@@ -269,6 +269,7 @@ internal fun HomeCountryDialog(
             ) {
                 Text(
                     text = "${info.provider} • ${formatTime(info.fetchedAtMs)} • ${when {
+                        throughFoxy -> "UAC Foxy SOCKS"
                         throughPow -> "UAC PoW SOCKS"
                         throughTor -> "Tor SOCKS"
                         else -> "Xray SOCKS"
@@ -320,6 +321,7 @@ internal fun HomePingDialog(
     onRefresh: () -> Unit,
     onDismissRequest: () -> Unit,
     throughPow: Boolean = false,
+    throughFoxy: Boolean = false,
 ) {
     val isPersian = LocalHomePersian.current
     val localizedFont = homeLocalizedFont()
@@ -328,6 +330,7 @@ internal fun HomePingDialog(
         visible = visible,
         title = homeText("Ping details", "جزئیات پینگ"),
         subtitle = when {
+            throughFoxy -> homeText("Live HTTPS measurement through Foxy", "سنجش زنده مسیر HTTPS از Foxy")
             throughPow -> homeText("Live HTTPS measurement through UAC PoW", "سنجش زنده مسیر HTTPS از UAC PoW")
             throughTor -> homeText("Live HTTPS measurement through Tor", "سنجش زنده مسیر HTTPS از Tor")
             else -> homeText("Live HTTPS route measurement", "سنجش زنده مسیر HTTPS")
@@ -485,6 +488,10 @@ internal fun HomePingDialog(
             MetricDetailRow(
                 homeText("Method", "روش تست"),
                 when {
+                    throughFoxy -> homeText(
+                        "HTTPS payload through Foxy SOCKS",
+                        "ارسال HTTPS از SOCKS مربوط به Foxy",
+                    )
                     throughPow -> homeText(
                         "HTTPS payload through UAC PoW SOCKS",
                         "ارسال HTTPS از SOCKS مربوط به UAC PoW",

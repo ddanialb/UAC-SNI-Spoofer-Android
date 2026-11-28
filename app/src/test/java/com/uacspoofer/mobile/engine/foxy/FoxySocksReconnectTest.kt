@@ -202,4 +202,114 @@ class FoxySocksPauseTest {
             offset += read
         }
     }
+
+    /**
+     * The pause bug: only *new* connections honoured the flag, so a video that was already
+     * streaming kept running through its open stream — the app said "paused" while the tunnel was
+     * still carrying traffic. Pausing must close what is open, right then.
+     */
+    @Test
+    fun droppingLiveConnectionsClosesTheRunningRelay() = runBlocking {
+        // A server that accepts and then simply holds the connection open: the relay stays busy.
+        val silent = java.net.ServerSocket(0, 20, java.net.InetAddress.getByName("127.0.0.1"))
+        val held = java.util.Collections.synchronizedList(mutableListOf<java.net.Socket>())
+        val acceptThread = Thread {
+            runCatching {
+                while (!silent.isClosed) {
+                    val socket = silent.accept()
+                    held.add(socket)
+                }
+            }
+        }.also { it.isDaemon = true; it.start() }
+
+        val server = FoxySocksServer(
+            sessionProvider = { null },
+            openTunnel = { _, _, _ -> null },
+            // Paused: the relay dials the destination itself, which is what we can drive here.
+            bypassTunnel = { true },
+        )
+        server.start(19_080, 19_081)
+        val client = java.net.Socket()
+        try {
+            client.connect(InetSocketAddress("127.0.0.1", server.socksPort), 3_000)
+            client.soTimeout = 5_000
+            val input = client.getInputStream()
+            val output = client.getOutputStream()
+            output.write(byteArrayOf(5, 1, 0))
+            output.flush()
+            input.readFully(ByteArray(2))
+            val port = silent.localPort
+            output.write(
+                byteArrayOf(
+                    5, 1, 0, 1, 127, 0, 0, 1,
+                    (port shr 8).toByte(), port.toByte(),
+                ),
+            )
+            output.flush()
+            val reply = ByteArray(10)
+            input.readFully(reply)
+            assertEquals("CONNECT must be accepted before the drop", 0, reply[1].toInt())
+
+            Thread.sleep(150)
+            server.dropLiveConnections("pause")
+
+            val deadline = System.currentTimeMillis() + 3_000
+            var sawEnd = false
+            while (System.currentTimeMillis() < deadline) {
+                val read = runCatching { input.read(ByteArray(16)) }.getOrDefault(-1)
+                if (read < 0) {
+                    sawEnd = true
+                    break
+                }
+                Thread.sleep(25)
+            }
+            assertTrue("the client connection must be closed by the drop", sawEnd)
+        } finally {
+            runCatching { client.close() }
+            server.dispose()
+            runCatching { silent.close() }
+            held.forEach { runCatching { it.close() } }
+        }
+    }
+
+    /**
+     * "IP address type" must be a real choice, not a label: each mode decides the dial order and
+     * `IPv6` never strands a network that has no IPv6 at all.
+     */
+    @Test
+    fun ipAddressTypeDecidesTheDialOrder() {
+        val v4a = java.net.InetAddress.getByName("23.235.42.1")
+        val v4b = java.net.InetAddress.getByName("23.235.42.11")
+        val v6 = java.net.InetAddress.getByName("2a04:4e42::1")
+        val both = listOf(v4a, v6, v4b)
+
+        fun order(mode: String, input: List<java.net.InetAddress>): List<java.net.InetAddress> =
+            FoxyH2Session("edge.invalid", 2499, ipMode = mode).orderForIpMode(input)
+
+        assertEquals(
+            "auto keeps the previous behaviour: IPv4 first",
+            listOf(v4a, v4b, v6),
+            order(FoxyEngineSettings.IP_AUTO, both),
+        )
+        assertEquals(
+            "IPv4 only",
+            listOf(v4a, v4b),
+            order(FoxyEngineSettings.IP_V4, both).filter { it is java.net.Inet4Address },
+        )
+        assertEquals(
+            "IPv6 only when the network really has it",
+            listOf(v6),
+            order(FoxyEngineSettings.IP_V6, both).take(1),
+        )
+        assertEquals(
+            "IPv6 falls back to IPv4 when no IPv6 address exists",
+            listOf(v4a, v4b),
+            order(FoxyEngineSettings.IP_V6, listOf(v4a, v4b)),
+        )
+        assertEquals(
+            "both tries IPv6 first and keeps IPv4 as well",
+            listOf(v6, v4a, v4b),
+            order(FoxyEngineSettings.IP_BOTH, both),
+        )
+    }
 }

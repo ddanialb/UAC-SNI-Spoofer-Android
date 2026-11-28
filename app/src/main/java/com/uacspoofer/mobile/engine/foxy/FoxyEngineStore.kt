@@ -30,7 +30,7 @@ class FoxyEngineStore private constructor(context: Context) {
             .putBoolean(KEY_DUAL_POOL, validated.dualSessionPool)
             .putInt(KEY_SOCKS_PORT, validated.socksPort)
             .putString(KEY_HELLO_SPLIT, validated.helloSplit)
-            .putBoolean(KEY_PREFER_IPV4, validated.preferIpv4)
+            .putString(KEY_IP_MODE, validated.ipMode)
             .putBoolean(KEY_KEEP_ALIVE, validated.keepAlive)
             .putBoolean(KEY_AUTO_RECONNECT, validated.autoReconnect)
             .putInt(KEY_EDGE_ATTEMPTS, validated.edgeAttempts)
@@ -70,7 +70,7 @@ class FoxyEngineStore private constructor(context: Context) {
             dualSessionPool = b(KEY_DUAL_POOL, d.dualSessionPool),
             socksPort = i(KEY_SOCKS_PORT, d.socksPort),
             helloSplit = s(KEY_HELLO_SPLIT, d.helloSplit),
-            preferIpv4 = b(KEY_PREFER_IPV4, d.preferIpv4),
+            ipMode = s(KEY_IP_MODE, d.ipMode),
             keepAlive = b(KEY_KEEP_ALIVE, d.keepAlive),
             autoReconnect = b(KEY_AUTO_RECONNECT, d.autoReconnect),
             edgeAttempts = i(KEY_EDGE_ATTEMPTS, d.edgeAttempts),
@@ -93,7 +93,7 @@ class FoxyEngineStore private constructor(context: Context) {
         private const val KEY_DUAL_POOL = "dual_session_pool"
         private const val KEY_SOCKS_PORT = "socks_port"
         private const val KEY_HELLO_SPLIT = "foxy_hello_split"
-        private const val KEY_PREFER_IPV4 = "foxy_prefer_ipv4"
+        private const val KEY_IP_MODE = "foxy_ip_mode"
         private const val KEY_KEEP_ALIVE = "foxy_keep_alive"
         private const val KEY_AUTO_RECONNECT = "foxy_auto_reconnect"
         private const val KEY_EDGE_ATTEMPTS = "foxy_edge_attempts"

@@ -20,7 +20,11 @@ data class FoxyEngineSettings(
     val socksPort: Int = 19_060,
     /** Off / sni / firstByte / record — how the TLS ClientHello is fragmented. */
     val helloSplit: String = HELLO_SPLIT_SNI,
-    val preferIpv4: Boolean = true,
+    /**
+     * Which address family the edge is dialled over: `auto` (app decides, IPv4 first),
+     * `v4`, `v6` (IPv6 first, IPv4 as the fallback on networks without IPv6) or `both`.
+     */
+    val ipMode: String = IP_AUTO,
     val keepAlive: Boolean = true,
     val autoReconnect: Boolean = true,
     val edgeAttempts: Int = 6,
@@ -37,6 +41,7 @@ data class FoxyEngineSettings(
         customProxyPort = if (customProxyPort in 1..65_535) customProxyPort else 1080,
         socksPort = if (socksPort in 1024..65_535) socksPort else 19_060,
         helloSplit = normalizeHelloSplit(helloSplit),
+        ipMode = normalizeIpMode(ipMode),
         edgeAttempts = edgeAttempts.coerceIn(1, 12),
         fallbackPorts = fallbackPorts.split(',')
             .mapNotNull { it.trim().toIntOrNull()?.takeIf { port -> port in 1..65_535 } }
@@ -75,6 +80,12 @@ data class FoxyEngineSettings(
         const val HELLO_SPLIT_FIRST_BYTE = "firstByte"
         const val HELLO_SPLIT_RECORD = "record"
 
+        const val IP_AUTO = "auto"
+        const val IP_V4 = "v4"
+        const val IP_V6 = "v6"
+        const val IP_BOTH = "both"
+        val IP_MODES = setOf(IP_AUTO, IP_V4, IP_V6, IP_BOTH)
+
         val DEFAULT = FoxyEngineSettings()
 
         fun normalizeHelloSplit(raw: String?): String = when (raw?.trim()?.lowercase()) {
@@ -82,6 +93,16 @@ data class FoxyEngineSettings(
             HELLO_SPLIT_FIRST_BYTE, "first_byte", "first-byte", "firstbyte" -> HELLO_SPLIT_FIRST_BYTE
             HELLO_SPLIT_RECORD -> HELLO_SPLIT_RECORD
             else -> HELLO_SPLIT_SNI
+        }
+
+        fun normalizeIpMode(raw: String?): String {
+            val value = raw?.trim()?.lowercase().orEmpty()
+            return when (value) {
+                IP_V4, "ipv4", "4" -> IP_V4
+                IP_V6, "ipv6", "6" -> IP_V6
+                IP_BOTH, "any" -> IP_BOTH
+                else -> IP_AUTO
+            }
         }
 
         fun normalizeScheme(scheme: String?): String =

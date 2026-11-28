@@ -640,6 +640,10 @@ class UacVpnService : VpnService() {
         }
         val nowPaused = VpnPauseStore.toggle()
         AppLogRepository.info(LogSource.SERVICE, if (nowPaused) "Tunnel paused (direct)" else "Tunnel resumed")
+        // Foxy needs no rebuild: the relays read the flag per connection. What it does need is the
+        // already-open connections to stop, otherwise a running stream keeps flowing through the
+        // tunnel and Pause visibly does nothing until that stream ends on its own.
+        if (activeEngine.isFoxy) runCatching { foxyCoordinator.onPauseChanged(nowPaused) }
         serviceScope.launch {
             runCatching { applyPauseRouting(nowPaused) }
                 .onFailure {
@@ -668,8 +672,9 @@ class UacVpnService : VpnService() {
                 )
             }
             activeEngine.isFoxy -> {
-                // The Foxy relays read VpnPauseStore on every new connection, so nothing has to be
-                // rebuilt: new sessions leave the device directly while the H2 tunnel stays warm.
+                // Live connections were already dropped in requestPauseToggle(); the relays read
+                // VpnPauseStore on every new connection, so nothing has to be rebuilt and the H2
+                // tunnel stays warm.
                 AppLogRepository.info(
                     LogSource.SERVICE,
                     if (paused) "Pause applied (Foxy relays go direct)" else "Resume applied (Foxy relays use the tunnel)",

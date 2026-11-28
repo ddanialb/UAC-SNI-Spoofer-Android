@@ -10,7 +10,9 @@ import android.net.VpnService
 import com.uacspoofer.mobile.logging.AppLogRepository
 import com.uacspoofer.mobile.logging.LogSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -41,8 +43,8 @@ class FoxyH2Session(
     private val vpnService: VpnService? = null,
     /** How the TLS ClientHello is fragmented on the wire (DPI evasion). */
     private val helloSplitMode: HelloSplitMode = HelloSplitMode.SNI,
-    /** Prefer IPv4 addresses when the edge resolves to both families. */
-    private val preferIpv4: Boolean = true,
+    /** Which address family the edge is dialled over (see [FoxyEngineSettings.ipMode]). */
+    private val ipMode: String = FoxyEngineSettings.IP_AUTO,
     /** Send PING frames so a silently-dead edge is detected. */
     private val keepAliveEnabled: Boolean = true,
     /** Test seam: lets the fake-edge tunnel test terminate TLS with its own certificate. */
@@ -101,86 +103,209 @@ class FoxyH2Session(
         proxyPassToken = token
     }
 
+    /**
+     * Connects the tunnel.
+     *
+     * Two things must never be left to a single try on carriers like Rightel:
+     *
+     * * the address — the system resolver can hand back a hijacked address that completes the TCP
+     *   handshake and then never answers TLS, which is exactly the "stuck at «دست‌دهی امن با
+     *   سرور»" report. Every resolved address (system, DNS-over-HTTPS and the pinned anycast ones)
+     *   is dialled in parallel and the first one that finishes TLS wins; the others are closed and
+     *   the stalling one is marked unhealthy for the next attempt.
+     * * the ClientHello split — tried configured first, then a plain handshake, then the other
+     *   split, each phase racing all addresses at once.
+     *
+     * Because each phase races, a phase costs one timeout instead of one timeout per address, so
+     * the whole thing finishes in seconds on a healthy network even when one address is black-holed.
+     */
     suspend fun connect() = withContext(Dispatchers.IO) {
-        // A handshake that never answers must not hang the whole connect: carriers such as Rightel
-        // stall the split ClientHello (or drop the segments entirely). Try the configured split,
-        // then a plain handshake, then a plain handshake on a single resolved address.
+        val proxiesEdge = proxySettings?.enabled == true && proxySettings.host.isNotEmpty()
+        val addresses: List<InetAddress?> = if (proxiesEdge) {
+            listOf(null)
+        } else {
+            val resolved = resolveEdgeAddresses()
+            if (resolved.isEmpty()) throw IOException("cannot resolve edge host $edgeHost")
+            orderForIpMode(resolved)
+        }
+
         val ladder = buildList {
             add(helloSplitMode)
             add(HelloSplitMode.OFF)
             add(if (helloSplitMode == HelloSplitMode.FIRST_BYTE) HelloSplitMode.SNI else HelloSplitMode.FIRST_BYTE)
         }.distinct()
+
         var lastError: Exception? = null
-        for ((index, mode) in ladder.withIndex()) {
-            try {
-                val budget = ATTEMPT_BUDGET_MS
-                val done = withTimeoutOrNull(budget.toLong()) {
-                    openSession(mode, failFastOnly = index == ladder.lastIndex)
-                    true
-                }
-                if (done == true) return@withContext
-                throw java.io.IOException("handshake did not finish within ${budget}ms")
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        for (mode in ladder) {
+            AppLogRepository.info(
+                LogSource.APP,
+                "Foxy: dialling $edgeHost:$edgePort (split=${mode.name.lowercase()}, ip=$ipMode) — " +
+                    addresses.joinToString { it?.hostAddress ?: "upstream-proxy" },
+            )
+            val dialed = try {
+                withTimeoutOrNull(ATTEMPT_BUDGET_MS.toLong()) { raceTls(mode, addresses) }
+            } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 lastError = error
-                runCatching { disposeTransport() }
+                null
+            }
+            if (dialed == null) {
+                lastError = lastError ?: IOException("no address answered the TLS handshake within ${ATTEMPT_BUDGET_MS}ms")
                 AppLogRepository.warning(
                     LogSource.APP,
-                    "Foxy: H2 handshake to $edgeHost:$edgePort failed with hello split=" +
-                        "${mode.name.lowercase()} (${error.message}); trying the next method",
+                    "Foxy: no address of $edgeHost:$edgePort answered TLS with split=${mode.name.lowercase()}; " +
+                        "trying the next method",
+                )
+                continue
+            }
+            try {
+                adopt(dialed)
+                return@withContext
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                lastError = error
+                disposeTransport()
+                dialed.address?.let { FoxyNetwork.markAddressFailed(it) }
+                AppLogRepository.warning(
+                    LogSource.APP,
+                    "Foxy: TLS to ${dialed.address?.hostAddress ?: edgeHost} succeeded but the HTTP/2 handshake " +
+                        "failed (${error.message}); trying the next method",
                 )
             }
         }
-        throw lastError ?: java.io.IOException("edge $edgeHost:$edgePort did not answer the handshake")
+        throw lastError ?: IOException("edge $edgeHost:$edgePort did not answer the handshake")
     }
 
-    /** One full handshake attempt with a specific ClientHello split mode. */
-    private suspend fun openSession(helloSplit: HelloSplitMode, failFastOnly: Boolean) {
-        AppLogRepository.info(
-            LogSource.APP,
-            "Foxy: connecting H2 tunnel to $edgeHost:$edgePort (hello split=${helloSplit.name.lowercase()})",
-        )
+    /** A socket pair that finished TCP + TLS + certificate checks, before the HTTP/2 preface. */
+    private class DialedTransport(
+        val raw: Socket,
+        val ssl: SSLSocket,
+        val address: InetAddress?,
+    ) {
+        fun close() {
+            runCatching { ssl.close() }
+            runCatching { raw.close() }
+        }
+    }
+
+    private suspend fun resolveEdgeAddresses(): List<InetAddress> =
+        runCatching { FoxyNetwork.resolveHostAddresses(edgeHost).toList() }
+            .getOrDefault(emptyList())
+            .ifEmpty {
+                runCatching { InetAddress.getAllByName(edgeHost).toList() }.getOrDefault(emptyList())
+            }
+            .take(MAX_ADDRESS_ATTEMPTS)
+
+    /** Applies the user's "IP address type" choice to the resolved addresses. */
+    internal fun orderForIpMode(addresses: List<InetAddress>): List<InetAddress> {
+        val v4 = addresses.filterIsInstance<java.net.Inet4Address>()
+        val v6 = addresses.filterIsInstance<java.net.Inet6Address>()
+        val ordered = when (ipMode) {
+            // IPv6 only when the network really has it, otherwise IPv4, exactly as the option says.
+            FoxyEngineSettings.IP_V6 -> if (v6.isNotEmpty()) v6 else v4
+            FoxyEngineSettings.IP_BOTH -> v6 + v4
+            FoxyEngineSettings.IP_V4 -> if (v4.isNotEmpty()) v4 else v6
+            else -> v4 + v6
+        }
+        // The address of the edge we just failed on goes last; it is still tried, because on a
+        // single-address edge it is the only way in.
+        val preferred = avoidAddress
+        return (ordered + addresses).distinct().sortedBy { if (it == preferred) 1 else 0 }
+    }
+
+    /**
+     * Dials every address at once and keeps the first that completes TLS. A hijacked address that
+     * accepts the connection and then goes silent loses the race and is marked unhealthy, so the
+     * next attempt does not spend its budget on it again.
+     */
+    private suspend fun raceTls(mode: HelloSplitMode, addresses: List<InetAddress?>): DialedTransport? =
+        coroutineScope {
+            val winner = CompletableDeferred<DialedTransport?>()
+            val pending = AtomicInteger(addresses.size)
+            val races = addresses.map { address ->
+                launch(Dispatchers.IO) {
+                    try {
+                        val dialed = dialAndSecure(mode, address)
+                        address?.let { FoxyNetwork.clearAddressFailure(it) }
+                        if (!winner.complete(dialed)) dialed.close()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        address?.let { FoxyNetwork.markAddressFailed(it) }
+                        AppLogRepository.debug(
+                            LogSource.APP,
+                            "Foxy: ${address?.hostAddress ?: edgeHost}:$edgePort did not finish the TLS handshake " +
+                                "(split=${mode.name.lowercase()}): ${error.message}",
+                        )
+                    } finally {
+                        if (pending.decrementAndGet() == 0 && !winner.isCompleted) winner.complete(null)
+                    }
+                }
+            }
+            val result = winner.await()
+            races.forEach { it.cancel() }
+            result
+        }
+
+    /** TCP + TLS + ALPN + certificate for one address and one split mode. */
+    private suspend fun dialAndSecure(mode: HelloSplitMode, address: InetAddress?): DialedTransport {
         val raw = Socket()
         raw.tcpNoDelay = true
         raw.soTimeout = HANDSHAKE_TIMEOUT_MS
         runCatching { raw.keepAlive = true }
-        if (proxySettings?.enabled == true && proxySettings.host.isNotEmpty()) {
-            connectViaProxy(raw, proxySettings, edgeHost, edgePort)
+        if (address == null) {
+            connectViaProxy(raw, checkNotNull(proxySettings), edgeHost, edgePort)
         } else {
-            connectDirect(raw, singleAddress = failFastOnly)
+            connectDirect(raw, address)
         }
-        socket = raw
-
         // Wrap so the ClientHello leaves in several TCP segments (SNI hiding).
-        val transport: Socket = if (helloSplit == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, helloSplit)
+        val transport: Socket = if (mode == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, mode)
         // Device trust store + the public roots the Fastly edges chain to (see FoxyTrust).
         val factory = socketFactoryOverride ?: FoxyTrust.socketFactory
-        val ssl = factory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
-        ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
-        ssl.soTimeout = HANDSHAKE_TIMEOUT_MS
-        setAlpn(ssl, arrayOf("h2"))
-        ssl.startHandshake()
+        val ssl = try {
+            factory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
+        } catch (error: Exception) {
+            runCatching { raw.close() }
+            throw error
+        }
+        try {
+            ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
+            ssl.soTimeout = HANDSHAKE_TIMEOUT_MS
+            setAlpn(ssl, arrayOf("h2"))
+            ssl.startHandshake()
+            val negotiated = getAlpn(ssl)
+            if (negotiated != "h2") {
+                // Fastly's plain CDN endpoint answers on some ports with a valid certificate for a
+                // different hostname and ALPN "null": treating that as a session made the app report
+                // CONNECTED and drop the tunnel a heartbeat later.
+                throw IOException(
+                    "edge $edgeHost:$edgePort did not negotiate HTTP/2 (ALPN=${negotiated ?: "none"}); this port is not a Foxy edge",
+                )
+            }
+            if (!verifyHostname(ssl)) {
+                throw IOException("edge certificate is not valid for $edgeHost (possible interception)")
+            }
+        } catch (error: Exception) {
+            runCatching { ssl.close() }
+            runCatching { raw.close() }
+            throw error
+        }
+        return DialedTransport(raw, ssl, address)
+    }
 
-        val negotiated = getAlpn(ssl)
-        AppLogRepository.debug(LogSource.APP, "Foxy: edge ALPN = ${negotiated ?: "none"}")
-        if (negotiated != "h2") {
-            // Fastly's plain CDN endpoint answers on some ports with a valid certificate for a
-            // different hostname and ALPN "null": treating that as a session made the app report
-            // CONNECTED and drop the tunnel a heartbeat later.
-            ssl.close()
-            raw.close()
-            throw IOException(
-                "edge $edgeHost:$edgePort did not negotiate HTTP/2 (ALPN=${negotiated ?: "none"}); this port is not a Foxy edge",
-            )
-        }
-        if (!verifyHostname(ssl)) {
-            ssl.close()
-            raw.close()
-            throw IOException("edge certificate is not valid for $edgeHost (possible interception)")
-        }
+    /** Adopts the winning socket and finishes the HTTP/2 handshake on it. */
+    private suspend fun adopt(dialed: DialedTransport) {
+        socket = dialed.raw
+        val ssl = dialed.ssl
         sslSocket = ssl
         ssl.soTimeout = READ_IDLE_TIMEOUT_MS
+        AppLogRepository.debug(LogSource.APP, "Foxy: edge ALPN = ${getAlpn(ssl) ?: "none"}")
+        AppLogRepository.info(
+            LogSource.APP,
+            "Foxy: TLS ready with $edgeHost:$edgePort via ${dialed.address?.hostAddress ?: "upstream proxy"}",
+        )
 
         val out = ssl.outputStream
         out.write(H2_PREFACE)
@@ -210,45 +335,18 @@ class FoxyH2Session(
     }
 
     /**
-     * Dials the edge directly, preferring IPv4 and trying every resolved address. Creating an
-     * IPv6 socket and connecting it to an IPv4-only network is what produced
-     * `connect failed: ENETUNREACH` on Iranian carriers (the socket was bound to `::`).
+     * Dials the edge on one explicit address.
+     *
+     * The address is chosen by [orderForIpMode] and the caller races several of them, so this
+     * function never picks "the first address that connects" by itself: on carriers that hijack
+     * DNS that first address is exactly the one that accepts TCP and then stalls the handshake.
      */
-    private suspend fun connectDirect(raw: Socket, singleAddress: Boolean = false) {
-        val resolved = runCatching { FoxyNetwork.resolveHostAddresses(edgeHost).toList() }.getOrDefault(emptyList())
-            .ifEmpty {
-                runCatching { InetAddress.getAllByName(edgeHost).toList() }.getOrDefault(emptyList())
-            }
-        if (resolved.isEmpty()) throw IOException("cannot resolve edge host $edgeHost")
-        val ordered = resolved.sortedWith(
-            compareBy(
-                { if (preferIpv4 && it is java.net.Inet4Address) 0 else 1 },
-                { if (it == avoidAddress) 1 else 0 },
-            ),
-        )
+    private fun connectDirect(raw: Socket, address: InetAddress) {
         val service = vpnService
         if (service != null && com.uacspoofer.mobile.vpn.SocketProtectGate.isEnabled(service)) {
             runCatching { service.protect(raw) }
         }
-        var lastError: Exception? = null
-        val attempts = if (singleAddress) ordered.take(1) else ordered.take(MAX_ADDRESS_ATTEMPTS)
-        for (address in attempts) {
-            try {
-                raw.connect(java.net.InetSocketAddress(address, edgePort), ADDRESS_CONNECT_TIMEOUT_MS)
-                if (address != ordered.first()) {
-                    AppLogRepository.info(LogSource.APP, "Foxy: edge $edgeHost:$edgePort reached via ${address.hostAddress}")
-                }
-                return
-            } catch (e: Exception) {
-                lastError = e
-                AppLogRepository.debug(
-                    LogSource.APP,
-                    "Foxy: edge $edgeHost:$edgePort address ${address.hostAddress} failed: ${e.message}",
-                )
-                runCatching { raw.close() }
-            }
-        }
-        throw lastError ?: IOException("cannot reach edge $edgeHost:$edgePort")
+        raw.connect(java.net.InetSocketAddress(address, edgePort), ADDRESS_CONNECT_TIMEOUT_MS)
     }
 
     private fun verifyHostname(ssl: SSLSocket): Boolean = runCatching {
@@ -822,10 +920,15 @@ class FoxyH2Session(
     companion object {
         private const val HANDSHAKE_TIMEOUT_MS = 9_000
         /** Total wall time one split method may take, including resolve/connect/handshake. */
-        private const val ATTEMPT_BUDGET_MS = 11_000
+        /**
+     * Budget for one phase (one split mode across every resolved address). The addresses are raced
+     * in parallel, so this is the whole phase, not a per-address value: Rightel answered the
+     * handshake in ~2 s on a good address while a hijacked one stayed silent for the full window.
+     */
+    private const val ATTEMPT_BUDGET_MS = 9_000
         private const val READ_IDLE_TIMEOUT_MS = 0
         private const val ADDRESS_CONNECT_TIMEOUT_MS = 6_000
-        private const val MAX_ADDRESS_ATTEMPTS = 3
+        private const val MAX_ADDRESS_ATTEMPTS = 4
         private val H2_PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
         private const val KEEP_ALIVE_INTERVAL_MS = 15_000L
         private const val INITIAL_CONNECTION_WINDOW = 4 * 1024 * 1024

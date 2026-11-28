@@ -178,6 +178,7 @@ internal fun ConnectionAwareFeatureCard(
         metrics = metrics,
         throughTor = engineMode.isTor,
         throughPow = engineMode.isPow,
+        throughFoxy = engineMode.isFoxy,
         onRefresh = {
             context.startService(
                 Intent(context, UacVpnService::class.java)

@@ -76,6 +76,8 @@ class FoxySocksServer(
     private val onBytes: (sent: Long, received: Long) -> Unit = { _, _ -> },
     /** True while the user has paused the tunnel: traffic must leave the device directly. */
     private val bypassTunnel: () -> Boolean = { false },
+    /** VpnService.protect for the paused-mode dials (they must not loop back into the TUN). */
+    private val protectSocket: (java.net.Socket) -> Unit = { _ -> },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + foxyCoroutineGuard("socks-server"))
     private var socksListener: ServerSocket? = null
@@ -83,6 +85,9 @@ class FoxySocksServer(
     private var acceptJob: Job? = null
     private val bytesSent = AtomicLong(0L)
     private val bytesReceived = AtomicLong(0L)
+    /** Every client socket and relay stream that is live right now, so Pause can drop them. */
+    private val liveClients = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<java.net.Socket, Boolean>())
+    private val liveStreams = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<FoxyRelayStream, Boolean>())
 
     var socksPort: Int = 0
         private set
@@ -113,6 +118,7 @@ class FoxySocksServer(
     }
 
     fun dispose() {
+        dropLiveConnections("relay stopped")
         stop()
         scope.cancel()
     }
@@ -156,12 +162,14 @@ class FoxySocksServer(
                 break
             }
             client.tcpNoDelay = true
+            liveClients.add(client)
             scope.launch {
                 try {
                     handler(client)
                 } catch (_: CancellationException) {
                 } catch (_: Exception) {
                 } finally {
+                    liveClients.remove(client)
                     runCatching { client.close() }
                 }
             }
@@ -243,6 +251,7 @@ class FoxySocksServer(
         try {
             relay(input, output, tunnel)
         } finally {
+            liveStreams.remove(tunnel)
             tunnel.dispose()
         }
     }
@@ -334,17 +343,51 @@ class FoxySocksServer(
         try {
             relay(input, output, plain)
         } finally {
+            liveStreams.remove(plain)
             plain.dispose()
         }
     }
 
     /** Tunnel stream normally, plain socket while paused — same contract for both. */
-    private suspend fun openStream(session: FoxyH2Session?, host: String, port: Int): FoxyRelayStream? =
-        if (bypassTunnel()) {
-            runCatching { FoxyDirectStream(host, port) }.getOrNull()
+    private suspend fun openStream(session: FoxyH2Session?, host: String, port: Int): FoxyRelayStream? {
+        // Read the flag once: a Pause that lands mid-connect must not produce a half-paused stream.
+        val direct = bypassTunnel()
+        val stream = if (direct) {
+            runCatching { FoxyDirectStream(host, port, protect = protectSocket) }
+                .onFailure {
+                    AppLogRepository.debug(LogSource.APP, "Foxy: paused direct dial to $host:$port failed: ${it.message}")
+                }
+                .getOrNull()
         } else {
             session?.let { openTunnel(it, host, port) }
         }
+        if (stream != null) liveStreams.add(stream)
+        return stream
+    }
+
+    /**
+     * Drops every relayed connection right now.
+     *
+     * Pause used to only affect *new* connections, so an already-playing video kept streaming
+     * through its open H2 stream: the app said "paused" while the tunnel was clearly still doing
+     * the work. Closing the client sockets and streams makes Pause take effect immediately.
+     */
+    fun dropLiveConnections(reason: String = "pause") {
+        // toTypedArray(), not toList(): the backing concurrent map must not be iterated while
+        // connections come and go, or the iteration aborts with NoSuchElementException.
+        val clients = liveClients.toTypedArray()
+        val streams = liveStreams.toTypedArray()
+        liveClients.clear()
+        liveStreams.clear()
+        streams.forEach { runCatching { it.dispose() } }
+        clients.forEach { runCatching { it.close() } }
+        if (clients.isNotEmpty() || streams.isNotEmpty()) {
+            AppLogRepository.info(
+                LogSource.APP,
+                "Foxy: dropped ${clients.size} live connection(s) and ${streams.size} stream(s) ($reason)",
+            )
+        }
+    }
 
     private suspend fun openTunnelForHttp(output: OutputStream, host: String, port: Int): FoxyRelayStream? {
         val session = sessionProvider()

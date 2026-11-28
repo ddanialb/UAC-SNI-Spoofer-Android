@@ -62,7 +62,7 @@ import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.SettingsEthernet
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.TravelExplore
+import androidx.compose.material.icons.outlined.Public
 import com.uacspoofer.mobile.engine.foxy.FoxyEngineSettings
 import com.uacspoofer.mobile.engine.foxy.FoxyAccount
 import com.uacspoofer.mobile.engine.foxy.FoxyAccountStore
@@ -86,7 +86,6 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     var loginVisible by remember { mutableStateOf(false) }
     var refreshingAccount by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-    var flowVisible by remember { mutableStateOf(false) }
     val helloSplitChoices = listOf(
         PowMenuChoice(
             FoxyEngineSettings.HELLO_SPLIT_SNI,
@@ -110,6 +109,29 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
         ),
     )
     val attemptChoices = listOf(2, 4, 6, 8, 12).map { n -> PowMenuChoice(n.toString(), homeLtr(n.toString())) }
+    // Same wording as UAC PoW's "IP address type": one option per real behaviour of the dial.
+    val ipModes = listOf(
+        PowMenuChoice(
+            FoxyEngineSettings.IP_AUTO,
+            homeText("Auto", "خودکار"),
+            homeText("Same as before; the app decides", "مثل قبل، خود برنامه انتخاب می‌کنه"),
+        ),
+        PowMenuChoice(
+            FoxyEngineSettings.IP_V4,
+            homeLtr("IPv4"),
+            homeText("Regular addresses", "آدرس‌های معمولی"),
+        ),
+        PowMenuChoice(
+            FoxyEngineSettings.IP_V6,
+            homeLtr("IPv6"),
+            homeText("If your internet has no IPv6, it uses IPv4", "اگه اینترنتت IPv6 نداشت، با IPv4 وصل می‌شه"),
+        ),
+        PowMenuChoice(
+            FoxyEngineSettings.IP_BOTH,
+            homeText("Both", "هر دو"),
+            homeText("Tries both", "هر دو رو امتحان می‌کنه"),
+        ),
+    )
 
 
     ToolPageScaffold(
@@ -125,10 +147,6 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             )
         },
     ) {
-        item {
-            FoxyLiveFlowButton(accent = accent, onClick = { flowVisible = true })
-        }
-
         item {
             FoxySection(
                 icon = Icons.Outlined.Route,
@@ -161,13 +179,15 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
                     },
                 )
                 PowRowDivider()
-                PowSwitchRow(
-                    icon = Icons.Outlined.TravelExplore,
-                    title = homeText("Prefer IPv4", "اولویت IPv4"),
-                    subtitle = homeText("Stops ENETUNREACH on mobile data", "خطای ENETUNREACH را روی داده موبایل رفع می‌کند"),
-                    checked = engineSettings.preferIpv4,
+                PowPickerRow(
+                    icon = Icons.Outlined.Public,
+                    label = homeText("IP address type", "نوع آدرس IP"),
+                    subtitle = homeText("If it won't connect, try IPv6", "اگه وصل نشدی، IPv6 رو امتحان کن"),
+                    sheetTitle = homeText("IP address type", "نوع آدرس IP"),
+                    choices = ipModes,
+                    selectedId = engineSettings.ipMode,
                     accent = accent,
-                    onCheckedChange = { engineStore.save(engineSettings.copy(preferIpv4 = it)) },
+                    onSelect = { id -> engineStore.save(engineSettings.copy(ipMode = id)) },
                 )
                 PowRowDivider()
                 PowSwitchRow(
@@ -333,7 +353,6 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             onSignedIn = { loginVisible = false },
         )
     }
-    FoxyLiveFlowDialog(visible = flowVisible, onDismissRequest = { flowVisible = false })
 }
 
 private fun LazyListScope.foxyAccountRows(

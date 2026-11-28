@@ -1020,6 +1020,17 @@ private fun HomeScreenContent(
                 )
                 .zIndex(4f),
         )
+        // Foxy walks the same ordered stage list the PoW/Tor sheets show.
+        FoxyConnectSheet(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(
+                    start = 18.dp,
+                    end = 18.dp,
+                    bottom = safeDrawingPadding.calculateBottomPadding() + 10.dp,
+                )
+                .zIndex(5f),
+        )
         if (showGuide) {
             val step = checkNotNull(guideStep)
             HomeGuideOverlay(

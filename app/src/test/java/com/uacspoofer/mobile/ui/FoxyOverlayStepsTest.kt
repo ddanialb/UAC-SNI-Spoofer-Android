@@ -1,58 +1,79 @@
 package com.uacspoofer.mobile.ui
 
 import com.uacspoofer.mobile.engine.foxy.FoxyPhase
+import com.uacspoofer.mobile.engine.foxy.FoxyStage
+import com.uacspoofer.mobile.engine.foxy.FoxyStageState
 import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 import com.uacspoofer.mobile.engine.foxy.FoxyStep
 import com.uacspoofer.mobile.engine.foxy.FoxyStepState
-import com.uacspoofer.mobile.engine.foxy.FoxyUiStatus
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The connect overlay must show what the engine really did, not a fixed four-row script. */
+/** The connect sheet/pill must advance through the engine's real ordered stages. */
 class FoxyOverlayStepsTest {
     @Test
-    fun realEngineStepsReplaceThePlaceholderHierarchy() {
-        val status = FoxyUiStatus(
-            phase = FoxyPhase.EDGE,
-            steps = listOf(
-                FoxyStep("guardian token ok", FoxyStepState.DONE),
-                FoxyStep("edge lime121.mozillavpn.net:2499", FoxyStepState.DONE),
-                FoxyStep("h2 connect", FoxyStepState.RUNNING),
-            ),
-        )
+    fun enteringAStageClosesEverythingBeforeIt() {
+        FoxyStatusStore.reset()
+        FoxyStatusStore.enter(FoxyStage.PREPARE)
+        FoxyStatusStore.enter(FoxyStage.ACCOUNT)
+        FoxyStatusStore.enter(FoxyStage.SIGN_IN)
+        val status = FoxyStatusStore.status.value
 
-        val steps = ConnectProgressModel.foxySteps(status)
-
-        assertEquals(3, steps.size)
-        assertEquals("h2 connect", steps.last().english)
-        assertEquals(MiniStepState.RUNNING, steps.last().state)
-        assertEquals(MiniStepState.DONE, steps.first().state)
-        // the coarse placeholder labels must not leak in once the engine talks
-        assertFalse(steps.any { it.english == "Firefox edge" })
+        assertEquals(FoxyStageState.DONE, status.stageState(FoxyStage.PREPARE))
+        assertEquals(FoxyStageState.DONE, status.stageState(FoxyStage.ACCOUNT))
+        assertEquals(FoxyStageState.RUNNING, status.stageState(FoxyStage.SIGN_IN))
+        assertEquals(FoxyStageState.PENDING, status.stageState(FoxyStage.READY))
+        assertEquals(FoxyStage.SIGN_IN, status.currentStage)
+        FoxyStatusStore.reset()
     }
 
     @Test
-    fun aFailureMarksTheRunningStepFailed() {
-        val status = FoxyUiStatus(
-            phase = FoxyPhase.FAILED,
-            steps = listOf(FoxyStep("h2 handshake refused", FoxyStepState.FAILED)),
-        )
+    fun theSheetShowsEveryStageInOrder() {
+        FoxyStatusStore.reset()
+        FoxyStatusStore.enter(FoxyStage.RELAY, "Starting the secure tunnel...")
 
-        assertEquals(MiniStepState.FAILED, ConnectProgressModel.foxySteps(status).single().state)
+        // 13 real stages, the Persian title of the running one is the "secure tunnel" line.
+        assertEquals(13, FoxyStage.entries.size)
+        assertEquals("راه‌اندازی تونل امن", FoxyStageCopy.title(FoxyStage.RELAY, true))
+        assertTrue(FoxyStageCopy.progress(FoxyStage.RELAY, true).contains("راه‌اندازی تونل امن"))
+        FoxyStatusStore.reset()
     }
 
     @Test
-    fun thePlaceholderIsStillShownBeforeTheFirstMessage() {
-        val steps = ConnectProgressModel.foxySteps(FoxyUiStatus(phase = FoxyPhase.AUTH))
+    fun aFailureIsPinnedToTheStageThatFailed() {
+        FoxyStatusStore.reset()
+        FoxyStatusStore.enter(FoxyStage.SELECT)
+        FoxyStatusStore.enter(FoxyStage.TLS)
+        FoxyStatusStore.fail(FoxyStage.TLS, "edge certificate rejected")
+        val status = FoxyStatusStore.status.value
 
-        assertTrue(steps.isNotEmpty())
-        assertEquals(MiniStepState.RUNNING, steps[ConnectProgressModel.focusIndex(steps)].state)
+        assertEquals(FoxyPhase.FAILED, status.phase)
+        assertEquals(FoxyStageState.FAILED, status.stageState(FoxyStage.TLS))
+        assertEquals(FoxyStageState.DONE, status.stageState(FoxyStage.SELECT))
+        assertEquals(FoxyStage.TLS, status.currentStage)
+        assertEquals("edge certificate rejected", status.detail)
+        FoxyStatusStore.reset()
     }
 
     @Test
-    fun theStoreKeepsHistoryAndClosesTheOpenStep() {
+    fun theCompactPillWalksForwardOneGroupAtATime() {
+        FoxyStatusStore.reset()
+        FoxyStatusStore.enter(FoxyStage.PREPARE)
+        FoxyStatusStore.enter(FoxyStage.ACCOUNT)
+        FoxyStatusStore.enter(FoxyStage.SIGN_IN)
+
+        val steps = ConnectProgressModel.foxySteps(FoxyStatusStore.status.value)
+
+        assertEquals(5, steps.size)
+        assertEquals(MiniStepState.DONE, steps[0].state)
+        assertEquals(MiniStepState.RUNNING, steps[1].state)
+        assertEquals(MiniStepState.PENDING, steps[2].state)
+        FoxyStatusStore.reset()
+    }
+
+    @Test
+    fun theStoreKeepsMessageHistoryAndClosesTheOpenStep() {
         FoxyStatusStore.reset()
         FoxyStatusStore.note("resolve guard")
         FoxyStatusStore.note("open tunnel")

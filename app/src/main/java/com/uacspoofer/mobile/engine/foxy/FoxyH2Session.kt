@@ -48,7 +48,7 @@ class FoxyH2Session(
     /** Test seam: lets the fake-edge tunnel test terminate TLS with its own certificate. */
     private val socketFactoryOverride: SSLSocketFactory? = null,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + foxyCoroutineGuard("h2-session"))
     private val writeLock = Mutex()
     private val activeStreams = ConcurrentHashMap<Int, FoxyH2Stream>()
     private val pendingHeaderBlocks = ConcurrentHashMap<Int, ByteArray>()
@@ -387,18 +387,20 @@ class FoxyH2Session(
 
     fun sendWindowUpdate(streamId: Int, delta: Int) {
         if (delta <= 0) return
-        scope.launch { writeFrame(8, 0, streamId, encodeWindowUpdatePayload(delta)) }
+        scope.launch { foxyRunQuietly("window-update") { writeFrame(8, 0, streamId, encodeWindowUpdatePayload(delta)) } }
     }
 
     fun sendWindowUpdatePair(streamId: Int, delta: Int) {
         if (delta <= 0 || disposed.get() || sslSocket == null) return
         scope.launch {
-            writeLock.withLock {
-                if (disposed.get() || sslSocket == null) return@withLock
-                val payload = encodeWindowUpdatePayload(delta)
-                writeFrameRaw(8, 0, 0, payload)
-                writeFrameRaw(8, 0, streamId, payload)
-                sslSocket?.outputStream?.flush()
+            foxyRunQuietly("window-update-pair") {
+                writeLock.withLock {
+                    if (disposed.get() || sslSocket == null) return@withLock
+                    val payload = encodeWindowUpdatePayload(delta)
+                    writeFrameRaw(8, 0, 0, payload)
+                    writeFrameRaw(8, 0, streamId, payload)
+                    sslSocket?.outputStream?.flush()
+                }
             }
         }
     }
@@ -557,7 +559,7 @@ class FoxyH2Session(
                         }
                         i += 6
                     }
-                    scope.launch { writeFrame(4, 1, 0, ByteArray(0)) }
+                    scope.launch { foxyRunQuietly("settings-ack") { writeFrame(4, 1, 0, ByteArray(0)) } }
                 }
             }
             8 -> {
@@ -573,7 +575,7 @@ class FoxyH2Session(
                 }
             }
             6 -> {
-                if ((flags and 1) == 0) scope.launch { writeFrame(6, 1, 0, payload) }
+                if ((flags and 1) == 0) scope.launch { foxyRunQuietly("ping-ack") { writeFrame(6, 1, 0, payload) } }
                 else pingsOutstanding.set(0)
             }
             7 -> {
@@ -744,7 +746,7 @@ class FoxyH2Session(
     )
 
     fun sendRstStream(streamId: Int, errorCode: Int) {
-        scope.launch {
+        scope.launch { foxyRunQuietly("rst-stream") {
             writeFrame(
                 3, 0, streamId,
                 byteArrayOf(
@@ -754,7 +756,7 @@ class FoxyH2Session(
                     (errorCode and 0xFF).toByte(),
                 ),
             )
-        }
+        } }
     }
 
     fun dispose() {

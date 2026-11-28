@@ -26,11 +26,11 @@ internal object FoxyTunRelayConfig {
         socksPort: Int,
         tunIpv4: String = "198.18.0.1",
         mapDns: String = MAP_DNS,
-        blockUdp: Boolean = true,
+        udpEnabled: Boolean = true,
         bigBuffers: Boolean = false,
     ): String {
-        // Foxy SOCKS is TCP-only (no UDP ASSOCIATE): block UDP quickly so QUIC falls back to TCP.
-        val udpTimeout = if (blockUdp) UDP_BLOCKED_TIMEOUT_MS else UDP_TIMEOUT_MS
+        // The single global UDP switch decides this — Foxy must not block UDP on its own.
+        val udpTimeout = if (udpEnabled) UDP_TIMEOUT_MS else UDP_BLOCKED_TIMEOUT_MS
         val safeMtu = mtu.coerceIn(1280, 1500)
         val safePort = socksPort.coerceIn(1024, 65_535)
         return """
@@ -42,7 +42,7 @@ internal object FoxyTunRelayConfig {
             socks5:
               port: $safePort
               address: '127.0.0.1'
-              udp: 'udp'
+              udp: '${if (udpEnabled) "udp" else "off"}'
             mapdns:
               address: '$mapDns'
               port: 53

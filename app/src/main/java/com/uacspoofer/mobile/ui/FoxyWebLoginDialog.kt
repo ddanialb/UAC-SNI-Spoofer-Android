@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -152,32 +153,27 @@ internal fun FoxyWebLoginDialog(
                 )
             }
 
+            // Two explicit choices instead of a sentence with a link: "already have an account?
+            // create account" read backwards and Mozilla's own page said the opposite of it.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    if (signUp) {
-                        homeText("New to Firefox?", "حساب فایرفاکس نداری؟")
-                    } else {
-                        homeText("Already have a Firefox account?", "حساب فایرفاکس داری؟")
-                    },
-                    color = UacColors.TextSecondary,
-                    fontSize = 11.5.sp,
+                SignInChoice(
+                    label = homeText("Sign in", "ورود"),
+                    selected = !signUp,
+                    onClick = { if (signUp) signUp = false },
+                    modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { signUp = !signUp }) {
-                    Text(
-                        if (signUp) {
-                            homeText("Sign in instead", "ورود به حساب")
-                        } else {
-                            homeText("Create an account", "ساخت حساب")
-                        },
-                        fontSize = 11.5.sp,
-                        color = UacColors.DisconnectedBlue,
-                    )
-                }
+                SignInChoice(
+                    label = homeText("Create account", "ساخت حساب"),
+                    selected = signUp,
+                    onClick = { if (!signUp) signUp = true },
+                    modifier = Modifier.weight(1f),
+                )
             }
 
             if (progress < 1f || busy) {
@@ -380,4 +376,35 @@ private fun WebView.configureForLogin() {
     CookieManager.getInstance().setAcceptCookie(true)
     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
     isVerticalScrollBarEnabled = true
+}
+
+/** Small segmented button used for the sign-in / create-account choice. */
+@Composable
+private fun SignInChoice(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val accent = UacColors.DisconnectedBlue
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (selected) accent.copy(alpha = 0.18f) else Color.Transparent)
+            .border(
+                1.dp,
+                if (selected) accent.copy(alpha = 0.75f) else PowBorder,
+                RoundedCornerShape(9.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (selected) UacColors.TextPrimary else UacColors.TextSecondary,
+            fontSize = 11.5.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
 }

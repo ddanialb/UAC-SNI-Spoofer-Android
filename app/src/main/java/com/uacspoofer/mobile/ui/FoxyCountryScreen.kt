@@ -74,9 +74,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** "Automatic" for Foxy is Mozilla's own REC (recommended) record. */
-private const val FOXY_AUTOMATIC = "REC"
-
 @Composable
 internal fun FoxyCountryScreen(onMenuClick: () -> Unit) {
     val context = LocalContext.current

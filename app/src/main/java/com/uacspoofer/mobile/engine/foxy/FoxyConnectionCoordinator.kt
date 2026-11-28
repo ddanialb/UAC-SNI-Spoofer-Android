@@ -37,7 +37,7 @@ class FoxyConnectionCoordinator(
     private val engineStore = FoxyEngineStore.get(appContext)
     private val accountStore = FoxyAccountStore.get(appContext)
     private val tunRelay = SocksTunRelay()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + foxyCoroutineGuard("foxy-coordinator"))
     private val lifecycle = Mutex()
     private val sessionSwapLocks = arrayOf(Mutex(), Mutex())
     private val sessions = arrayOfNulls<FoxyH2Session>(2)
@@ -88,49 +88,56 @@ class FoxyConnectionCoordinator(
             // the second connection could not come up until the app was restarted.
             teardownLocked()
             FoxyStatusStore.reset()
-            FoxyStatusStore.update(FoxyPhase.STARTING, 10, "Preparing Firefox VPN...")
+            // Each enter() below is a real step in this function, in order, so the sheet advances
+            // one row at a time exactly like the PoW/Tor one.
+            FoxyStatusStore.enter(FoxyStage.PREPARE, "Preparing Firefox VPN...")
+            FoxyStatusStore.enter(FoxyStage.ACCOUNT)
             val account = resolveActiveAccount()
             if (account == null) {
-                FoxyStatusStore.update(FoxyPhase.FAILED, 0, "No usable Firefox account. Sign in in Foxy Settings.")
+                FoxyStatusStore.fail(FoxyStage.ACCOUNT, "No usable Firefox account. Sign in in Foxy Settings.")
                 throw IllegalStateException("No usable Firefox account. Sign in in Foxy Settings.")
             }
-            FoxyStatusStore.update(FoxyPhase.AUTH, 30, "Signing in to Firefox Accounts (${account.email})...")
+            FoxyStatusStore.enter(FoxyStage.SIGN_IN, "Signing in to Firefox Accounts (${account.email})...")
+            FoxyStatusStore.enter(FoxyStage.PASS)
             val pass = ensureProxyPassWithFailover(account)
-                ?: throw IllegalStateException("Could not obtain a proxy pass from Mozilla Guardian.")
-            FoxyStatusStore.update(FoxyPhase.EDGE, 50, "Resolving edge server...")
+            if (pass == null) {
+                FoxyStatusStore.fail(FoxyStage.PASS, "Could not obtain a proxy pass from Mozilla Guardian.")
+                throw IllegalStateException("Could not obtain a proxy pass from Mozilla Guardian.")
+            }
+            FoxyStatusStore.enter(FoxyStage.SERVERS, "Fetching the Firefox VPN server list...")
             val countries = guardian().fetchCountries()
             val engineSettings = engineStore.snapshot()
             val candidates = GuardianClient.getCandidates(countries, engineSettings.serverCountry, engineSettings.serverCity)
             if (candidates.isEmpty()) {
-                FoxyStatusStore.update(FoxyPhase.FAILED, 0, "No Firefox VPN edge matched the selected location.")
+                FoxyStatusStore.fail(FoxyStage.SERVERS, "No Firefox VPN edge matched the selected location.")
                 throw IllegalStateException("No Firefox VPN edge matched the selected location.")
             }
+            FoxyStatusStore.enter(FoxyStage.SELECT, "Choosing among ${candidates.size} Firefox VPN edge(s)...")
             val ordered = orderCandidates(candidates)
-            FoxyStatusStore.update(FoxyPhase.EDGE, 60, "Ranking ${ordered.size} Firefox VPN edge(s)...")
             val (session, chosen, lastError) = dialEdgeSession(ordered)
             if (session == null || chosen == null) {
                 val attempts = minOf(ordered.size, MAX_EDGE_ATTEMPTS)
                 val msg = lastError?.message?.let { "All $attempts Firefox VPN edge(s) failed. Last error: $it" }
                     ?: "No Firefox VPN edge could be reached across $attempts attempt(s)."
-                FoxyStatusStore.update(FoxyPhase.FAILED, 0, msg)
+                FoxyStatusStore.fail(FoxyStage.TLS, msg)
                 throw IllegalStateException(msg)
             }
+            FoxyStatusStore.done(FoxyStage.H2)
             currentProxyPassToken = pass.token
             currentProxyPassExpiry = pass.expiresAtEpochSeconds
             attachSession(session, chosen, slot = 0)
             rememberSuccessfulEdge(chosen)
-            FoxyStatusStore.update(FoxyPhase.TUNNEL, 85, "Starting local SOCKS5 & HTTP relays...")
+            FoxyStatusStore.enter(FoxyStage.TUNNEL, "Opening the local relays...")
             startSocksServer(settings)
             if (settings.connectionMode != CONNECTION_MODE_PROXY) {
-                FoxyStatusStore.update(FoxyPhase.TUNNEL, 90, "Routing device traffic through Foxy")
+                FoxyStatusStore.enter(FoxyStage.TUN, "Building the VPN interface...")
                 val mtu = FoxyTunRelayConfig.mtuForChain(settings.tunMtu)
                 val backendSettings = if (backend == TunBackend.ZEPTUN) settings.copy(tunMtu = mtu) else settings
                 val tun = checkNotNull(establishTun(backendSettings)) { "Android could not establish the VPN interface" }
                 tunDescriptor = tun
                 try {
-                    // Follow the user's global UDP choice: when UDP is enabled we keep the normal
-                    // UDP timeout instead of force-blocking QUIC; the relay itself is TCP-only, so
-                    // UDP still cannot be carried and falls back the way the setting asks for.
+                    // UDP is never force-blocked here: the single global UDP switch (Settings →
+                    // UDP) is the only thing that decides it, exactly like the other engines.
                     val udpEnabled = settings.socksUdp
                     tunRelay.start(
                         service, backend, tun,
@@ -145,7 +152,7 @@ class FoxyConnectionCoordinator(
                             mtu = mtu,
                             socksPort = sessionSocksPort,
                             tunIpv4 = settings.tunAddress,
-                            blockUdp = !udpEnabled,
+                            udpEnabled = udpEnabled,
                             bigBuffers = settings.bigBuffers,
                         )
                     }
@@ -155,14 +162,18 @@ class FoxyConnectionCoordinator(
                     throw e
                 }
             }
+            FoxyStatusStore.enter(FoxyStage.RELAY, "Starting the secure tunnel...")
+            FoxyStatusStore.done(FoxyStage.RELAY)
+            FoxyStatusStore.enter(FoxyStage.VERIFY, "Checking the connection...")
             startProxyPassRenewal()
             if (engineStore.snapshot().dualSessionPool) {
-                secondaryJob = scope.launch { ensureSecondarySession(ordered) }
+                secondaryJob = scope.launch { foxyRunQuietly("secondary-session") { ensureSecondarySession(ordered) } }
             }
-            scope.launch { probeExitIp() }
+            scope.launch { foxyRunQuietly("exit-ip-probe") { probeExitIp() } }
             scope.launch { runCatching { refreshQuota() } }
             running = true
-            FoxyStatusStore.update(FoxyPhase.CONNECTED, 100, "Connected to Firefox VPN", edgeHost = chosen.host, countryCode = chosen.countryCode)
+            FoxyStatusStore.setEdge(chosen.host, chosen.countryCode)
+            FoxyStatusStore.enter(FoxyStage.READY, "Connected to Firefox VPN")
             AppLogRepository.success(LogSource.APP, "Foxy engine is active edge=${chosen.authority} country=${chosen.countryName}")
         }
     }
@@ -343,11 +354,7 @@ class FoxyConnectionCoordinator(
             for (port in settings.edgePorts(candidate.port)) {
                 val authority = "${candidate.host}:$port"
                 try {
-                    FoxyStatusStore.update(
-                        FoxyPhase.EDGE,
-                        60 + i * 30 / maxOf(1, attempts),
-                        "Connecting to Fastly edge ($authority)...",
-                    )
+                    FoxyStatusStore.enter(FoxyStage.TLS, "Securing the link to $authority...")
                     val edge = withTimeoutOrNull(EDGE_ATTEMPT_TIMEOUT_MS) {
                         val session = FoxyH2Session(
                             candidate.host,
@@ -367,6 +374,8 @@ class FoxyConnectionCoordinator(
                         AppLogRepository.warning(LogSource.APP, "Foxy edge $authority timed out after ${EDGE_ATTEMPT_TIMEOUT_MS / 1000}s")
                         continue
                     }
+                    FoxyStatusStore.enter(FoxyStage.H2, "Negotiating HTTP/2 with $authority...")
+                    FoxyStatusStore.done(FoxyStage.H2)
                     session = edge
                     chosen = candidate
                     break
@@ -459,12 +468,12 @@ class FoxyConnectionCoordinator(
 
     private fun onSessionDraining(session: FoxyH2Session, reason: String) {
         if (findSessionSlot(session) < 0 || !running) return
-        scope.launch { replaceSessionInPlace(session, reason, isFailure = false) }
+        scope.launch { foxyRunQuietly("replace-session") { replaceSessionInPlace(session, reason, isFailure = false) } }
     }
 
     private fun onSessionFailed(session: FoxyH2Session, reason: String) {
         if (findSessionSlot(session) < 0 || !running) return
-        scope.launch { replaceSessionInPlace(session, reason, isFailure = true) }
+        scope.launch { foxyRunQuietly("replace-session-failed") { replaceSessionInPlace(session, reason, isFailure = true) } }
     }
 
     private suspend fun replaceSessionInPlace(targetSession: FoxyH2Session, reason: String, isFailure: Boolean) {
@@ -502,7 +511,7 @@ class FoxyConnectionCoordinator(
             }
             if (replacement == null || chosen == null) {
                 if (hasOtherHealthySession(slot)) return@withLock
-                FoxyStatusStore.update(FoxyPhase.FAILED, 0, "Foxy tunnel dropped and replacement failed: ${lastError?.message ?: reason}")
+                FoxyStatusStore.fail(null, "Foxy tunnel dropped and replacement failed: ${lastError?.message ?: reason}")
                 running = false
                 return@withLock
             }
@@ -523,9 +532,11 @@ class FoxyConnectionCoordinator(
         }
         synchronized(retiredSessions) { retiredSessions.add(oldSession) }
         scope.launch {
-            delay(30_000)
-            synchronized(retiredSessions) { retiredSessions.remove(oldSession) }
-            oldSession.dispose()
+            foxyRunQuietly("retire-session") {
+                delay(30_000)
+                synchronized(retiredSessions) { retiredSessions.remove(oldSession) }
+                oldSession.dispose()
+            }
         }
     }
 
@@ -544,7 +555,7 @@ class FoxyConnectionCoordinator(
                 return@withLock
             }
             attachSession(secondary, chosen, slot = 1)
-            staggerJob = scope.launch { runDualPoolStaggerLoop(ordered) }
+            staggerJob = scope.launch { foxyRunQuietly("dual-pool-stagger") { runDualPoolStaggerLoop(ordered) } }
         }
     }
 
@@ -721,11 +732,7 @@ class FoxyConnectionCoordinator(
                 conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
             }.trim()
             if (IPV4_REGEX.matches(ip) || IPV6_REGEX.matches(ip)) {
-                FoxyStatusStore.update(
-                    phase = FoxyStatusStore.status.value.phase,
-                    progressPercent = FoxyStatusStore.status.value.progressPercent,
-                    exitIp = ip,
-                )
+                FoxyStatusStore.setExitIp(ip)
                 return true
             }
         } catch (_: Exception) {

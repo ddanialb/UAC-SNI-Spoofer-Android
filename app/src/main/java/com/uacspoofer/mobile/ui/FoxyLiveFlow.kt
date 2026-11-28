@@ -249,8 +249,8 @@ internal fun FoxyLiveFlowContent() {
         Spacer(Modifier.height(10.dp))
         Text(
             homeText(
-                "The tunnel is TCP-only: UDP/QUIC is blocked inside it so browsers fall back to TCP.",
-                "تونل فقط TCP است: UDP/QUIC داخلش مسدود می‌شود تا مرورگرها به TCP برگردند.",
+                "UDP follows your global UDP switch in Settings — Foxy never blocks it on its own.",
+                "UDP از همان کلید سراسری UDP در تنظیمات پیروی می‌کند و Foxy خودش آن را مسدود نمی‌کند.",
             ),
             color = UacColors.TextSecondary,
             fontSize = 10.sp,

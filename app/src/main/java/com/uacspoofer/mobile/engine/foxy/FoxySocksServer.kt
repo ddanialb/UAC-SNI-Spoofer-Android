@@ -75,7 +75,7 @@ class FoxySocksServer(
     private val openTunnel: suspend (session: FoxyH2Session, host: String, port: Int) -> FoxyH2Stream?,
     private val onBytes: (sent: Long, received: Long) -> Unit = { _, _ -> },
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + foxyCoroutineGuard("socks-server"))
     private var socksListener: ServerSocket? = null
     private var httpListener: ServerSocket? = null
     private var acceptJob: Job? = null
@@ -92,8 +92,8 @@ class FoxySocksServer(
         socksListener = bindLoopback(socksRequested).also { socksPort = it.localPort }
         httpListener = bindLoopback(httpRequested).also { httpPort = it.localPort }
         acceptJob = scope.launch {
-            launch { acceptLoop(socksListener!!, ::handleSocksClient) }
-            launch { acceptLoop(httpListener!!, ::handleHttpClient) }
+            launch { foxyRunQuietly("socks-accept") { acceptLoop(socksListener!!, ::handleSocksClient) } }
+            launch { foxyRunQuietly("http-accept") { acceptLoop(httpListener!!, ::handleHttpClient) } }
         }
     }
 

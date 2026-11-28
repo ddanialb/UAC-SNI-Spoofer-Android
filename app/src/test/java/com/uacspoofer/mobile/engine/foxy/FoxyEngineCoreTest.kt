@@ -247,17 +247,22 @@ class FoxyTunRelayConfigTest {
     }
 
     @Test
-    fun yamlFollowsTheGlobalUdpSetting() {
-        // The user's global UDP switch decides the timeout: enabled keeps the normal value,
-        // disabled makes QUIC fail fast and fall back to TCP.
-        val udpOn = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060, blockUdp = false)
+    fun yamlFollowsTheGlobalUdpSettingAndNeverBlocksOnItsOwn() {
+        // Enabled (the default) keeps UDP open with the normal timeout.
+        val udpOn = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060, udpEnabled = true)
         assertTrue(udpOn.contains("udp-read-write-timeout: ${FoxyTunRelayConfig.UDP_TIMEOUT_MS}"))
-        val udpOff = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060, blockUdp = true)
+        assertTrue(udpOn.contains("udp: 'udp'"))
+        // Only the global switch turns it off.
+        val udpOff = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060, udpEnabled = false)
         assertTrue(udpOff.contains("udp-read-write-timeout: ${FoxyTunRelayConfig.UDP_BLOCKED_TIMEOUT_MS}"))
+        assertTrue(udpOff.contains("udp: 'off'"))
+        // The default must not be the blocking one.
+        val defaults = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060)
+        assertTrue(defaults.contains("udp: 'udp'"))
     }
 
     @Test
-    fun yamlBlocksUdpBecauseSocksIsTcpOnly() {
+    fun yamlCarriesThePortsAndFakeDns() {
         val yaml = FoxyTunRelayConfig.yaml(mtu = 1_280, socksPort = 19_060)
         assertTrue(yaml.contains("port: 19060"))
         assertTrue(yaml.contains("127.0.0.1"))

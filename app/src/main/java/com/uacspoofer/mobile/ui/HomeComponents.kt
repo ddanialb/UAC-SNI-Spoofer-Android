@@ -145,7 +145,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Ignore collapse taps this soon after opening the steps panel. */
-private const val COLLAPSE_GRACE_MS = 450L
+internal const val COLLAPSE_GRACE_MS = 450L
 
 @Composable
 internal fun HomeHeader(

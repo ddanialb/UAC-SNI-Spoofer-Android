@@ -162,4 +162,36 @@ class FoxyScreenshotTest {
             Box(Modifier.fillMaxSize().padding(16.dp)) { FoxyLiveFlowContent() }
         }
     }
+
+    @Test
+    fun foxyConnectSheetStagesPersian() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        com.uacspoofer.mobile.engine.EngineModeStore.get(context).setMode(com.uacspoofer.mobile.engine.EngineMode.UAC_FOXY)
+        ConnectPanelStore.get(context).setSteps(ConnectPanelMode.OPEN)
+        com.uacspoofer.mobile.core.ConnectionStateStore.markConnecting()
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.reset()
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.PREPARE)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.ACCOUNT)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.SIGN_IN)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.PASS)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.SERVERS)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.SELECT)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.TLS, "de.lime121.mozillavpn.net:2499")
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.H2)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.TUNNEL)
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.enter(com.uacspoofer.mobile.engine.foxy.FoxyStage.TUN, "Building the VPN interface...")
+        rule.setContent {
+            CompositionLocalProvider(LocalHomePersian provides true) {
+                UacSniSpooferTheme {
+                    Box(Modifier.fillMaxSize().background(UacColors.BackgroundTop).padding(18.dp)) {
+                        FoxyConnectSheet(Modifier.fillMaxSize())
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        com.github.takahirom.roborazzi.captureScreenRoboImage("build/screenshots/foxy_connect_steps_fa.png")
+        com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.reset()
+        com.uacspoofer.mobile.core.ConnectionStateStore.markDisconnected()
+    }
 }

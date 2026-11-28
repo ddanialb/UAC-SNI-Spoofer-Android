@@ -84,6 +84,7 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     val engineStore = remember(context) { FoxyEngineStore.get(context) }
     val engineSettings by engineStore.settings.collectAsStateWithLifecycle()
     var loginVisible by remember { mutableStateOf(false) }
+    var flowVisible by remember { mutableStateOf(false) }
     var refreshingAccount by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val helloSplitChoices = listOf(
@@ -134,6 +135,8 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
     )
 
 
+    FoxyLiveFlowDialog(visible = flowVisible, onDismissRequest = { flowVisible = false })
+
     ToolPageScaffold(
         accent = accent,
         verticalSpacing = PowGap,
@@ -147,6 +150,10 @@ internal fun FoxySettingsScreen(onBack: () -> Unit) {
             )
         },
     ) {
+        item {
+            FoxyLiveFlowButton(accent = accent, onClick = { flowVisible = true })
+        }
+
         item {
             FoxySection(
                 icon = Icons.Outlined.Route,

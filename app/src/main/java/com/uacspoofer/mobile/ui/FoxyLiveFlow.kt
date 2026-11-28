@@ -108,6 +108,53 @@ private fun hopState(status: FoxyUiStatus, hop: FoxyHop): FoxyFlowState {
     }
 }
 
+/** Tor-style entry point: one compact row that opens the live path. */
+@Composable
+internal fun FoxyLiveFlowButton(accent: Color, onClick: () -> Unit) {
+    val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
+    val dot = when (status.phase) {
+        FoxyPhase.IDLE -> UacColors.TextSecondary
+        FoxyPhase.CONNECTED -> UacColors.ConnectedGreen
+        FoxyPhase.FAILED -> UacColors.ErrorRed
+        else -> FoxyFlowRunning
+    }
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brush.linearGradient(listOf(Color(0xE6142231), Color(0xD90B1724))), shape)
+            .border(1.dp, accent.copy(alpha = 0.28f), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(34.dp).background(accent.copy(alpha = 0.14f), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.Route, null, tint = accent, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                homeText("Live path", "مسیر زنده"),
+                color = UacColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = homeLocalizedFont(),
+            )
+            Text(
+                status.detail.ifBlank { homeText("Every step of the Foxy connect, live", "همهٔ مراحل اتصال فاکسی، زنده") },
+                color = UacColors.TextSecondary,
+                fontSize = 11.5.sp,
+                fontFamily = homeLocalizedFont(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(Modifier.size(8.dp).background(dot, CircleShape))
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Outlined.ChevronLeft, null, tint = UacColors.TextSecondary, modifier = Modifier.size(18.dp))
+    }
+}
+
 @Composable
 internal fun FoxyLiveFlowDialog(visible: Boolean, onDismissRequest: () -> Unit) {
     AnimatedHomeMetricDialog(

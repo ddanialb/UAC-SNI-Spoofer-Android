@@ -77,6 +77,8 @@ class FoxyH2Session(
 
     @Volatile private var socket: Socket? = null
     @Volatile private var sslSocket: SSLSocket? = null
+    /** Why the last address of a phase failed, so the final error is not just "timed out". */
+    @Volatile private var lastFailureReason: String? = null
     @Volatile private var readerJob: Job? = null
     @Volatile private var keepAliveJob: Job? = null
 
@@ -151,7 +153,10 @@ class FoxyH2Session(
                 null
             }
             if (dialed == null) {
-                lastError = lastError ?: IOException("no address answered the TLS handshake within ${ATTEMPT_BUDGET_MS}ms")
+                val why = lastFailureReason?.let { " — last attempt: $it" }.orEmpty()
+                lastError = lastError ?: IOException(
+                    "no address answered the TLS handshake within ${ATTEMPT_BUDGET_MS}ms$why",
+                )
                 AppLogRepository.warning(
                     LogSource.APP,
                     "Foxy: no address of $edgeHost:$edgePort answered TLS with split=${mode.name.lowercase()}; " +
@@ -175,7 +180,8 @@ class FoxyH2Session(
                 )
             }
         }
-        throw lastError ?: IOException("edge $edgeHost:$edgePort did not answer the handshake")
+        val why = lastFailureReason?.let { " (last attempt: $it)" }.orEmpty()
+        throw lastError ?: IOException("edge $edgeHost:$edgePort did not answer the handshake$why")
     }
 
     /** A socket pair that finished TCP + TLS + certificate checks, before the HTTP/2 preface. */
@@ -234,6 +240,8 @@ class FoxyH2Session(
                         throw cancelled
                     } catch (error: Exception) {
                         address?.let { FoxyNetwork.markAddressFailed(it) }
+                        lastFailureReason = "${address?.hostAddress ?: edgeHost}:$edgePort " +
+                            (error.message ?: error.javaClass.simpleName)
                         AppLogRepository.debug(
                             LogSource.APP,
                             "Foxy: ${address?.hostAddress ?: edgeHost}:$edgePort did not finish the TLS handshake " +

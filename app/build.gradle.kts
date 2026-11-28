@@ -180,8 +180,12 @@ tasks.register("signReleaseWithRotation") {
     val lineage = rootProject.file("signing/rotation-lineage")
     val newSigningFile = rootProject.file("signing/new-signing.properties")
     doLast {
-        check(lineage.isFile) { "Missing ${lineage.absolutePath}. Create it with apksigner rotate." }
-        check(newSigningFile.isFile) { "Missing ${newSigningFile.absolutePath}" }
+        // Key rotation is optional: it only runs when the lineage and the new key exist. Without
+        // them the release APK keeps the single project key from signing.properties.
+        if (!lineage.isFile || !newSigningFile.isFile) {
+            logger.lifecycle("Skipping signReleaseWithRotation: no rotation lineage/new key configured")
+            return@doLast
+        }
         val rotated = Properties().apply { newSigningFile.inputStream().use { load(it) } }
         val oldStore = signingPropertiesFile.parentFile.resolve(signingProperties.getProperty("storeFile"))
         val newStore = newSigningFile.parentFile.resolve(rotated.getProperty("storeFile"))

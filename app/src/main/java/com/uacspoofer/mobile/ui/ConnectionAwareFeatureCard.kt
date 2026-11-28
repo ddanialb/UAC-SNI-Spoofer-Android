@@ -131,8 +131,8 @@ internal fun ConnectionAwareFeatureCard(
 
     LaunchedEffect(state, lookupId) {
         if (state == ConnectionState.CONNECTED) {
-            if (engineMode.isTor || engineMode.isPow) delay(8_000)
-            exitInfoRepository.refresh(profile.id, force = engineMode.isTor || engineMode.isPow)
+            if (engineMode.isTor || engineMode.isPow || engineMode.isFoxy) delay(8_000)
+            exitInfoRepository.refresh(profile.id, force = engineMode.isTor || engineMode.isPow || engineMode.isFoxy)
         } else {
             activeDialog = null
         }
@@ -191,6 +191,7 @@ internal fun ConnectionAwareFeatureCard(
         state = exitInfoState,
         throughTor = engineMode.isTor,
         throughPow = engineMode.isPow,
+        throughFoxy = engineMode.isFoxy,
         onRefresh = { scope.launch { exitInfoRepository.refresh(profile.id, force = true) } },
         onDismissRequest = { activeDialog = null },
     )

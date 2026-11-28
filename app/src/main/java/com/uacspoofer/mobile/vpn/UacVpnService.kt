@@ -667,6 +667,14 @@ class UacVpnService : VpnService() {
                     if (paused) "Pause applied (PoW/Tor SOCKS direct-only)" else "Resume applied (PoW/Tor tunnel restored)",
                 )
             }
+            activeEngine.isFoxy -> {
+                // The Foxy relays read VpnPauseStore on every new connection, so nothing has to be
+                // rebuilt: new sessions leave the device directly while the H2 tunnel stays warm.
+                AppLogRepository.info(
+                    LogSource.SERVICE,
+                    if (paused) "Pause applied (Foxy relays go direct)" else "Resume applied (Foxy relays use the tunnel)",
+                )
+            }
             activeEngine.isDirect -> {
                 val settings = advancedSettingsStore.snapshot()
                 if (isProxyMode()) {
@@ -2789,6 +2797,7 @@ class UacVpnService : VpnService() {
         return when {
             engine.isTor -> "Tor"
             engine.isPow -> "PoW"
+            engine.isFoxy -> "Foxy"
             engine.isDirect -> "Direct"
             else -> "Xray"
         }

@@ -94,7 +94,8 @@ internal fun FoxyConnectSheet(modifier: Modifier = Modifier) {
     }
     val shape = RoundedCornerShape(18.dp)
     val paint = connectPanelPaint(primary = true)
-    val done = rows.count { it.state == FoxyStageState.DONE }
+    val totalStages = FoxyStage.entries.size
+    val done = FoxyStage.entries.count { status.stageState(it) == FoxyStageState.DONE }
     val current = rows.firstOrNull { it.state == FoxyStageState.RUNNING }
         ?: rows.firstOrNull { it.state == FoxyStageState.FAILED }
         ?: rows.lastOrNull()
@@ -150,30 +151,22 @@ internal fun FoxyConnectSheet(modifier: Modifier = Modifier) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                homeText("Connection steps", "مراحل اتصال"),
+                                text = homeText("Connection steps", "مراحل اتصال"),
                                 color = UacColors.TextPrimary,
-                                fontSize = 13.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 fontFamily = font,
-                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Start,
+                                style = TextStyle(textDirection = if (persian) TextDirection.Rtl else TextDirection.Ltr),
                             )
-                            Text(
-                                homeLtr("$done/${rows.size}"),
-                                color = UacColors.TextSecondary,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                homeText("Hide", "بستن"),
-                                color = UacColors.TextSecondary,
-                                fontSize = 11.sp,
-                                fontFamily = font,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable(onClick = requestCollapse)
-                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                            ConnectPanelCount(done, totalStages, paint.border)
+                            Spacer(Modifier.weight(1f))
+                            ConnectPanelActions(
+                                onCollapse = requestCollapse,
+                                onClose = { panelStore.setSteps(ConnectPanelMode.CLOSED) },
                             )
                         }
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(UacColors.Divider))
                         Column(
                             Modifier.fillMaxWidth().verticalScroll(scroll),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -191,19 +184,32 @@ private data class FoxyStageRow(
     val stage: FoxyStage,
     val title: String,
     val detail: String,
-    val state: FoxyStageState?,
+    val state: FoxyStageState,
+    val total: Int = FoxyStage.entries.size,
 )
 
-private fun foxyStageRows(stages: Map<FoxyStage, FoxyStageStatus>, persian: Boolean): List<FoxyStageRow> =
-    FoxyStage.entries.map { stage ->
+/**
+ * Rows are emitted in order and only for stages the engine has actually reached — a pending stage
+ * must not sit in the list as a grey line, it appears when its turn comes (same as PoW).
+ */
+private fun foxyStageRows(stages: Map<FoxyStage, FoxyStageStatus>, persian: Boolean): List<FoxyStageRow> {
+    val reached = FoxyStage.entries.filter {
+        val state = stages[it]?.state
+        state != null && state != FoxyStageState.PENDING
+    }
+    val visible = if (reached.isEmpty()) FoxyStage.entries.take(1) else reached
+    val total = FoxyStage.entries.size
+    return visible.map { stage ->
         val entry = stages[stage]
         FoxyStageRow(
             stage = stage,
             title = FoxyStageCopy.title(stage, persian),
             detail = entry?.detail.orEmpty(),
-            state = entry?.state,
+            state = entry?.state ?: FoxyStageState.PENDING,
+            total = total,
         )
     }
+}
 
 @Composable
 private fun FoxyStageLine(row: FoxyStageRow, persian: Boolean, font: FontFamily?) {

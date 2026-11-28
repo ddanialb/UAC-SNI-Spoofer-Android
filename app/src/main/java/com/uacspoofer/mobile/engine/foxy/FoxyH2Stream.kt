@@ -16,7 +16,7 @@ class FoxyH2Stream(
     val streamId: Int,
     private val session: FoxyH2Session,
     initialSendWindow: Int = 65535,
-) {
+) : FoxyRelayStream {
     private val statusDeferred = CompletableDeferred<Int>()
     private val inboundLock = Any()
     private val inboundQueue: ArrayDeque<ByteArray> = ArrayDeque()
@@ -78,7 +78,7 @@ class FoxyH2Stream(
         }
     }
 
-    suspend fun sendEndStream() {
+    override suspend fun sendEndStream() {
         if (disposed || writeClosed || endStreamSent) return
         endStreamSent = true
         try {
@@ -87,7 +87,7 @@ class FoxyH2Stream(
         }
     }
 
-    suspend fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+    override suspend fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (disposed) return 0
         while (true) {
             var take = 0
@@ -122,7 +122,7 @@ class FoxyH2Stream(
         }
     }
 
-    suspend fun write(buffer: ByteArray, offset: Int, length: Int) {
+    override suspend fun write(buffer: ByteArray, offset: Int, length: Int) {
         var pos = offset
         val end = offset + length
         while (pos < end) {
@@ -133,7 +133,7 @@ class FoxyH2Stream(
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         if (disposed) return
         disposed = true
         var unconsumed = 0

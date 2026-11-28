@@ -121,3 +121,85 @@ class FoxySocksReconnectTest {
         const val HTTP_PORT = 19_061
     }
 }
+
+/**
+ * Pause must work for Foxy too: with the bypass flag on, the relay has to reach the destination
+ * directly (that is what "paused" means for the other engines), without any H2 session at all.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
+class FoxySocksPauseTest {
+
+    @Test
+    fun pausedRelayGoesDirectWithoutASession() = runBlocking {
+        val echo = java.net.ServerSocket(0, 20, java.net.InetAddress.getByName("127.0.0.1"))
+        val echoThread = Thread {
+            runCatching {
+                echo.accept().use { client ->
+                    val input = client.getInputStream()
+                    val output = client.getOutputStream()
+                    val buffer = ByteArray(256)
+                    val read = input.read(buffer)
+                    if (read > 0) {
+                        output.write("pong:".toByteArray() + buffer.copyOf(read))
+                        output.flush()
+                    }
+                }
+            }
+        }.also { it.start() }
+
+        var paused = true
+        val server = FoxySocksServer(
+            sessionProvider = { null },
+            openTunnel = { _, _, _ -> null },
+            bypassTunnel = { paused },
+        )
+        server.start(19_070, 19_071)
+        try {
+            withTimeout(10_000) {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress("127.0.0.1", server.socksPort), 3_000)
+                    socket.soTimeout = 5_000
+                    val input = socket.getInputStream()
+                    val output = socket.getOutputStream()
+                    output.write(byteArrayOf(5, 1, 0))
+                    output.flush()
+                    val greeting = ByteArray(2)
+                    input.readFully(greeting)
+                    assertEquals(5, greeting[0].toInt())
+                    assertEquals(0, greeting[1].toInt())
+                    // CONNECT 127.0.0.1:<echo port>
+                    val port = echo.localPort
+                    output.write(
+                        byteArrayOf(
+                            5, 1, 0, 1, 127, 0, 0, 1,
+                            ((port shr 8) and 0xff).toByte(), (port and 0xff).toByte(),
+                        ),
+                    )
+                    output.flush()
+                    val reply = ByteArray(10)
+                    input.readFully(reply)
+                    assertEquals("SOCKS CONNECT accepted while paused", 0, reply[1].toInt())
+                    output.write("ping".toByteArray())
+                    output.flush()
+                    val echoed = ByteArray(9)
+                    input.readFully(echoed)
+                    assertEquals("pong:ping", String(echoed, Charsets.US_ASCII))
+                }
+            }
+        } finally {
+            server.dispose()
+            runCatching { echo.close() }
+            runCatching { echoThread.join(1_000) }
+        }
+    }
+
+    private fun InputStream.readFully(target: ByteArray) {
+        var offset = 0
+        while (offset < target.size) {
+            val read = read(target, offset, target.size - offset)
+            if (read <= 0) break
+            offset += read
+        }
+    }
+}

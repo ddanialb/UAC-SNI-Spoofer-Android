@@ -103,12 +103,15 @@ jobs:
         shell: bash
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      - name: Build debug APK
+      - name: Build release APK (signed)
         shell: bash
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew :app:assembleDebug \
+          # A release build signed with the project key: the debug-signed APK was the reason
+          # Google Play Protect refused to install it.
+          ls -l signing.properties uac-release.jks
+          ./gradlew :app:assembleRelease \
             --stacktrace \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
 
@@ -117,10 +120,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out-apk
-          find app/build/outputs/apk/debug -name "*.apk" -exec cp {} out-apk/ \;
+          find app/build/outputs/apk/release -name "*.apk" -exec cp {} out-apk/ \;
+          test -n "$(ls -A out-apk)" || { echo "no release APK was produced"; exit 1; }
           ls -lh out-apk
           {
-            echo "### Foxy debug build"
+            echo "### Foxy release build (signed)"
             echo ""
             echo "| APK | Size |"
             echo "|---|---|"
@@ -134,7 +138,7 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: foxy-debug-apk
+          name: foxy-release-apk
           path: out-apk/*.apk
           if-no-files-found: error
           retention-days: 30

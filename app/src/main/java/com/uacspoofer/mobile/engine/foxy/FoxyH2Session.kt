@@ -102,9 +102,44 @@ class FoxyH2Session(
     }
 
     suspend fun connect() = withContext(Dispatchers.IO) {
+        // A handshake that never answers must not hang the whole connect: carriers such as Rightel
+        // stall the split ClientHello (or drop the segments entirely). Try the configured split,
+        // then a plain handshake, then a plain handshake on a single resolved address.
+        val ladder = buildList {
+            add(helloSplitMode)
+            add(HelloSplitMode.OFF)
+            add(if (helloSplitMode == HelloSplitMode.FIRST_BYTE) HelloSplitMode.SNI else HelloSplitMode.FIRST_BYTE)
+        }.distinct()
+        var lastError: Exception? = null
+        for ((index, mode) in ladder.withIndex()) {
+            try {
+                val budget = ATTEMPT_BUDGET_MS
+                val done = withTimeoutOrNull(budget.toLong()) {
+                    openSession(mode, failFastOnly = index == ladder.lastIndex)
+                    true
+                }
+                if (done == true) return@withContext
+                throw java.io.IOException("handshake did not finish within ${budget}ms")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                lastError = error
+                runCatching { disposeTransport() }
+                AppLogRepository.warning(
+                    LogSource.APP,
+                    "Foxy: H2 handshake to $edgeHost:$edgePort failed with hello split=" +
+                        "${mode.name.lowercase()} (${error.message}); trying the next method",
+                )
+            }
+        }
+        throw lastError ?: java.io.IOException("edge $edgeHost:$edgePort did not answer the handshake")
+    }
+
+    /** One full handshake attempt with a specific ClientHello split mode. */
+    private suspend fun openSession(helloSplit: HelloSplitMode, failFastOnly: Boolean) {
         AppLogRepository.info(
             LogSource.APP,
-            "Foxy: connecting H2 tunnel to $edgeHost:$edgePort (hello split=${helloSplitMode.name.lowercase()})",
+            "Foxy: connecting H2 tunnel to $edgeHost:$edgePort (hello split=${helloSplit.name.lowercase()})",
         )
         val raw = Socket()
         raw.tcpNoDelay = true
@@ -113,16 +148,17 @@ class FoxyH2Session(
         if (proxySettings?.enabled == true && proxySettings.host.isNotEmpty()) {
             connectViaProxy(raw, proxySettings, edgeHost, edgePort)
         } else {
-            connectDirect(raw)
+            connectDirect(raw, singleAddress = failFastOnly)
         }
         socket = raw
 
         // Wrap so the ClientHello leaves in several TCP segments (SNI hiding).
-        val transport: Socket = if (helloSplitMode == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, helloSplitMode)
+        val transport: Socket = if (helloSplit == HelloSplitMode.OFF) raw else ClientHelloSplitSocket(raw, helloSplit)
         // Device trust store + the public roots the Fastly edges chain to (see FoxyTrust).
         val factory = socketFactoryOverride ?: FoxyTrust.socketFactory
         val ssl = factory.createSocket(transport, edgeHost, edgePort, true) as SSLSocket
         ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
+        ssl.soTimeout = HANDSHAKE_TIMEOUT_MS
         setAlpn(ssl, arrayOf("h2"))
         ssl.startHandshake()
 
@@ -163,12 +199,22 @@ class FoxyH2Session(
         AppLogRepository.info(LogSource.APP, "Foxy: H2 tunnel session established with $edgeHost:$edgePort")
     }
 
+    /** Closes whatever a failed attempt left behind, without cancelling the retry scope. */
+    private fun disposeTransport() {
+        readerJob?.cancel()
+        readerJob = null
+        runCatching { sslSocket?.close() }
+        runCatching { socket?.close() }
+        sslSocket = null
+        socket = null
+    }
+
     /**
      * Dials the edge directly, preferring IPv4 and trying every resolved address. Creating an
      * IPv6 socket and connecting it to an IPv4-only network is what produced
      * `connect failed: ENETUNREACH` on Iranian carriers (the socket was bound to `::`).
      */
-    private suspend fun connectDirect(raw: Socket) {
+    private suspend fun connectDirect(raw: Socket, singleAddress: Boolean = false) {
         val resolved = runCatching { FoxyNetwork.resolveHostAddresses(edgeHost).toList() }.getOrDefault(emptyList())
             .ifEmpty {
                 runCatching { InetAddress.getAllByName(edgeHost).toList() }.getOrDefault(emptyList())
@@ -185,7 +231,8 @@ class FoxyH2Session(
             runCatching { service.protect(raw) }
         }
         var lastError: Exception? = null
-        for (address in ordered.take(MAX_ADDRESS_ATTEMPTS)) {
+        val attempts = if (singleAddress) ordered.take(1) else ordered.take(MAX_ADDRESS_ATTEMPTS)
+        for (address in attempts) {
             try {
                 raw.connect(java.net.InetSocketAddress(address, edgePort), ADDRESS_CONNECT_TIMEOUT_MS)
                 if (address != ordered.first()) {
@@ -773,7 +820,9 @@ class FoxyH2Session(
     }
 
     companion object {
-        private const val HANDSHAKE_TIMEOUT_MS = 12_000
+        private const val HANDSHAKE_TIMEOUT_MS = 9_000
+        /** Total wall time one split method may take, including resolve/connect/handshake. */
+        private const val ATTEMPT_BUDGET_MS = 11_000
         private const val READ_IDLE_TIMEOUT_MS = 0
         private const val ADDRESS_CONNECT_TIMEOUT_MS = 6_000
         private const val MAX_ADDRESS_ATTEMPTS = 3

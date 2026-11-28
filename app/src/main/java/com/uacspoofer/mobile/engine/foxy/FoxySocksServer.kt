@@ -74,6 +74,8 @@ class FoxySocksServer(
     private val sessionProvider: suspend () -> FoxyH2Session?,
     private val openTunnel: suspend (session: FoxyH2Session, host: String, port: Int) -> FoxyH2Stream?,
     private val onBytes: (sent: Long, received: Long) -> Unit = { _, _ -> },
+    /** True while the user has paused the tunnel: traffic must leave the device directly. */
+    private val bypassTunnel: () -> Boolean = { false },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + foxyCoroutineGuard("socks-server"))
     private var socksListener: ServerSocket? = null
@@ -210,13 +212,14 @@ class FoxySocksServer(
         val portBytes = ByteArray(2)
         readExact(input, portBytes, 2)
         val targetPort = ((portBytes[0].toInt() and 0xff) shl 8) or (portBytes[1].toInt() and 0xff)
-        val session = sessionProvider() ?: run {
+        val session = sessionProvider()
+        if (session == null && !bypassTunnel()) {
             output.write(socksReply(5))
             output.flush()
             return
         }
-        val tunnel: FoxyH2Stream? = try {
-            openTunnel(session, targetHost, targetPort)
+        val tunnel: FoxyRelayStream? = try {
+            openStream(session, targetHost, targetPort)
         } catch (e: FoxyTargetRejectedException) {
             output.write(socksReply(2))
             output.flush()
@@ -335,13 +338,22 @@ class FoxySocksServer(
         }
     }
 
-    private suspend fun openTunnelForHttp(output: OutputStream, host: String, port: Int): FoxyH2Stream? {
-        val session = sessionProvider() ?: run {
+    /** Tunnel stream normally, plain socket while paused — same contract for both. */
+    private suspend fun openStream(session: FoxyH2Session?, host: String, port: Int): FoxyRelayStream? =
+        if (bypassTunnel()) {
+            runCatching { FoxyDirectStream(host, port) }.getOrNull()
+        } else {
+            session?.let { openTunnel(it, host, port) }
+        }
+
+    private suspend fun openTunnelForHttp(output: OutputStream, host: String, port: Int): FoxyRelayStream? {
+        val session = sessionProvider()
+        if (session == null && !bypassTunnel()) {
             writeHttpError(output, "502 Bad Gateway")
             return null
         }
         return try {
-            openTunnel(session, host, port) ?: run {
+            openStream(session, host, port) ?: run {
                 writeHttpError(output, "502 Bad Gateway")
                 null
             }
@@ -378,7 +390,7 @@ class FoxySocksServer(
      * halves run as siblings in a [coroutineScope] so a failure in one cancels the other instead of
      * leaking a blocked reader.
      */
-    private suspend fun relay(clientIn: InputStream, clientOut: OutputStream, tunnel: FoxyH2Stream) =
+    private suspend fun relay(clientIn: InputStream, clientOut: OutputStream, tunnel: FoxyRelayStream) =
         coroutineScope {
             val up = async(Dispatchers.IO) { pumpClientToTunnel(clientIn, tunnel) }
             val down = async(Dispatchers.IO) { pumpTunnelToClient(tunnel, clientOut) }
@@ -392,7 +404,7 @@ class FoxySocksServer(
             }
         }
 
-    private suspend fun pumpClientToTunnel(from: InputStream, to: FoxyH2Stream) {
+    private suspend fun pumpClientToTunnel(from: InputStream, to: FoxyRelayStream) {
         val buffer = ByteArray(RELAY_BUFFER_SIZE)
         try {
             while (true) {
@@ -413,7 +425,7 @@ class FoxySocksServer(
         }
     }
 
-    private suspend fun pumpTunnelToClient(from: FoxyH2Stream, to: OutputStream) {
+    private suspend fun pumpTunnelToClient(from: FoxyRelayStream, to: OutputStream) {
         val buffer = ByteArray(RELAY_BUFFER_SIZE)
         try {
             while (true) {

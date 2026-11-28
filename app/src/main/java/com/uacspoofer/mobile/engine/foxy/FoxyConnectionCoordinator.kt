@@ -67,6 +67,12 @@ class FoxyConnectionCoordinator(
 
     fun socksPort(): Int = sessionSocksPort
     fun httpPort(): Int = sessionHttpPort
+    /** Port the current session's SOCKS listener is really on (0 when none). */
+    fun liveSocksPort(): Int = socksServer?.socksPort ?: 0
+
+    /** Port the current session's HTTP relay is really on (0 when none). */
+    fun liveHttpPort(): Int = socksServer?.httpPort ?: 0
+
     fun isRunning(): Boolean = running && (sessions[0]?.isConnected == true || sessions[1]?.isConnected == true)
     fun isRelayRunning(): Boolean = tunRelay.isRunning()
     fun tunStats(): TunStats = tunRelay.stats()
@@ -195,6 +201,8 @@ class FoxyConnectionCoordinator(
         socksServer = null
         sessionSocksPort = 0
         sessionHttpPort = 0
+        FoxyRuntime.socksPort = 0
+        FoxyRuntime.httpPort = 0
         for (i in sessions.indices) {
             sessions[i]?.dispose()
             sessions[i] = null
@@ -598,6 +606,8 @@ class FoxyConnectionCoordinator(
             sessionProvider = { selectUsableSession() },
             openTunnel = { session, host, port -> openConnectWithPassRetry(session, host, port) },
             onBytes = { sent, received -> bytesSent.set(sent); bytesReceived.set(received) },
+            // Pause must work for Foxy too: while paused the relays dial the destination directly.
+            bypassTunnel = { com.uacspoofer.mobile.vpn.VpnPauseStore.isPaused() },
         )
         socksServer = server
         val socksRequested = settings.socksPort
@@ -605,6 +615,9 @@ class FoxyConnectionCoordinator(
         server.start(socksRequested, httpRequested)
         sessionSocksPort = server.socksPort
         sessionHttpPort = server.httpPort
+        // Published so the exit-IP lookup and the UI dial the listener that actually exists.
+        FoxyRuntime.socksPort = server.socksPort
+        FoxyRuntime.httpPort = server.httpPort
     }
 
     private fun selectUsableSession(): FoxyH2Session? {
@@ -771,7 +784,8 @@ class FoxyConnectionCoordinator(
 
     companion object {
         private const val MAX_EDGE_ATTEMPTS = 12
-        private const val EDGE_ATTEMPT_TIMEOUT_MS = 12_000L
+        // Must cover the per-candidate handshake ladder (3 split methods x ATTEMPT_BUDGET_MS).
+        private const val EDGE_ATTEMPT_TIMEOUT_MS = 38_000L
         private const val MAX_REMEMBERED_FAILED_EDGES = 8
         private const val FAILED_EDGE_COOLDOWN_MS = 10 * 60 * 1000L
         private const val EXIT_IP_ATTEMPTS = 3

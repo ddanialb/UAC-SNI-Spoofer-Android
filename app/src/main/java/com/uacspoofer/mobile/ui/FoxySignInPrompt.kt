@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,8 +38,11 @@ internal fun FoxySignInPrompt(
     onDismiss: () -> Unit,
     onContinue: () -> Unit,
 ) {
-    val persian = LocalHomePersian.current
-    val font = homeLocalizedFont()
+    // This prompt is shown from the Activity, above MainScreen, so LocalHomePersian is not
+    // provided here — read the language from the store instead of silently falling back to English.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val persian = remember { LanguageStore.get(context).snapshot() == DrawerLanguage.PERSIAN }
+    val font = if (persian) VazirmatnUiFd else null
     val accent = UacColors.DisconnectedBlue
     Dialog(
         onDismissRequest = onDismiss,
@@ -68,7 +72,7 @@ internal fun FoxySignInPrompt(
                     )
                 }
                 Text(
-                    homeText("Firefox account needed", "ورود به حساب فایرفاکس لازم است"),
+                    if (persian) "ورود به حساب فایرفاکس لازم است" else "Firefox account needed",
                     color = UacColors.TextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -93,13 +97,13 @@ internal fun FoxySignInPrompt(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 PromptButton(
-                    label = homeText("Not now", "فعلاً نه"),
+                    label = if (persian) "فعلاً نه" else "Not now",
                     primary = false,
                     onClick = onDismiss,
                     modifier = Modifier.weight(1f),
                 )
                 PromptButton(
-                    label = homeText("Sign in", "ورود"),
+                    label = if (persian) "ورود" else "Sign in",
                     primary = true,
                     onClick = onContinue,
                     modifier = Modifier.weight(1f),

@@ -16,7 +16,7 @@ import com.uacspoofer.mobile.R
 
 internal val LocalHomePersian = staticCompositionLocalOf { false }
 
-private val VazirmatnUiFd = FontFamily(
+internal val VazirmatnUiFd = FontFamily(
     Font(R.font.vazirmatn_ui_fd_regular, FontWeight.Normal),
     Font(R.font.vazirmatn_ui_fd_medium, FontWeight.Medium),
     Font(R.font.vazirmatn_ui_fd_semibold, FontWeight.SemiBold),

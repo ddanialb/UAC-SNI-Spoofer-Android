@@ -174,6 +174,7 @@ internal fun HomeCountryDialog(
     onRefresh: () -> Unit,
     onDismissRequest: () -> Unit,
     throughPow: Boolean = false,
+    throughFoxy: Boolean = false,
 ) {
     val isPersian = LocalHomePersian.current
     val localizedFont = homeLocalizedFont()
@@ -182,6 +183,7 @@ internal fun HomeCountryDialog(
         visible = visible,
         title = homeText("My IP Information", "اطلاعات IP من"),
         subtitle = when {
+            throughFoxy -> homeText("Public exit details through Foxy", "مشخصات IP خروجی از طریق Foxy")
             throughPow -> homeText("Public exit details through UAC PoW", "مشخصات IP خروجی از طریق UAC PoW")
             throughTor -> homeText("Public exit details through Tor", "مشخصات IP خروجی از طریق Tor")
             else -> homeText("Public exit details through Xray", "مشخصات IP خروجی از طریق Xray")

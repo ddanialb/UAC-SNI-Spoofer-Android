@@ -73,13 +73,19 @@ class ExitIpInfoRepository private constructor(context: Context) {
                 engine.isPow -> powEngineStore.snapshot().exitCountryCode
                 else -> ""
             }
+            val foxyCountry = if (engine.isFoxy) {
+                com.uacspoofer.mobile.engine.foxy.FoxyStatusStore.status.value.countryCode
+            } else {
+                ""
+            }
             val lookupId = lookupId(
                 profileId = profileId,
                 torEngine = engine.isTor,
-                exitCountryCode = exitCountry,
+                exitCountryCode = if (engine.isFoxy) foxyCountry else exitCountry,
                 powEngine = engine.isPow,
                 powWarpOnly = powWarpOnly,
                 directModeKey = DirectStatusStore.status.value.exitLookupKey.takeIf { engine.isDirect },
+                foxyEngine = engine.isFoxy,
             )
             val now = System.currentTimeMillis()
             val memoryInfo = mutableState.value
@@ -111,15 +117,18 @@ class ExitIpInfoRepository private constructor(context: Context) {
                     MciConfig.LOCAL_SOCKS_ADDRESS to port
                 }
                 engine.isFoxy -> {
-                    val foxy = com.uacspoofer.mobile.engine.foxy.FoxyEngineStore.get(appContext).snapshot()
-                    MciConfig.LOCAL_SOCKS_ADDRESS to foxy.socksPort
+                    // The live listener, not the configured port: the relay may have bound another
+                    // one, and dialling the configured port returned "no information" every time.
+                    val live = com.uacspoofer.mobile.engine.foxy.FoxyRuntime.socksPort
+                    val configured = com.uacspoofer.mobile.engine.foxy.FoxyEngineStore.get(appContext).snapshot().socksPort
+                    MciConfig.LOCAL_SOCKS_ADDRESS to (live.takeIf { it > 0 } ?: configured)
                 }
                 else -> {
                     val settings = settingsStore.snapshot().validated()
                     settings.socksAddress to settings.socksPort
                 }
             }
-            val timeoutMs = if (engine.isTor || engine.isPow) TOR_LOOKUP_TIMEOUT_MS else LOOKUP_TIMEOUT_MS
+            val timeoutMs = if (engine.isTor || engine.isPow || engine.isFoxy) TOR_LOOKUP_TIMEOUT_MS else LOOKUP_TIMEOUT_MS
             val via = when {
                 engine.isTor -> "Tor SOCKS"
                 engine.isFoxy -> "UAC Foxy SOCKS"

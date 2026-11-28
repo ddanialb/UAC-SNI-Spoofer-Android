@@ -22,6 +22,10 @@ internal class TunBackendStartException(message: String, cause: Throwable) :
 
 /** The caller owns the descriptor until stop returns. Native backends only borrow it. */
 internal class SocksTunRelay {
+    private companion object {
+        const val HEV_STOP_TIMEOUT_MS = 3_000L
+    }
+
     data class Config(
         val port: Int,
         val mtu: Int,
@@ -58,7 +62,13 @@ internal class SocksTunRelay {
         config: Config,
         hevConfig: () -> Pair<String, String>,
     ) {
-        check(active == null) { "A TUN relay is already started" }
+        // A previous session may still hold the native backend (disconnect raced a reconnect).
+        // Tear it down instead of refusing to start: that refusal is what made the second Foxy
+        // connection fail until the app was restarted.
+        if (active != null || handle != 0L) {
+            AppLogRepository.warning(LogSource.TUN, "[TUN] Replacing a relay that was still active")
+            runCatching { stop() }
+        }
         AppLogRepository.info(LogSource.TUN, "[TUN] Starting ${backend.label}")
         try {
             when (backend) {
@@ -129,9 +139,23 @@ internal class SocksTunRelay {
         if (handle != 0L) {
             val stopping = handle
             handle = 0L
-            ZeptunNative.stop(stopping)
+            runCatching { ZeptunNative.stop(stopping) }
         }
-        if (backend == TunBackend.HEV) HevSocks5Tunnel.TProxyStopService()
+        if (backend == TunBackend.HEV) {
+            runCatching { HevSocks5Tunnel.TProxyStopService() }
+            // HEV stops on its own thread; starting it again while the old instance is still
+            // winding down makes the next start fail or reuse the closed TUN descriptor.
+            val deadline = SystemClock.elapsedRealtime() + HEV_STOP_TIMEOUT_MS
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val stillRunning = runCatching { HevSocks5Tunnel.TProxyIsRunning() }.getOrDefault(false)
+                if (!stillRunning) break
+                Thread.sleep(20L)
+            }
+            val leftover = runCatching { HevSocks5Tunnel.TProxyIsRunning() }.getOrDefault(false)
+            if (leftover) {
+                AppLogRepository.warning(LogSource.TUN, "[TUN] HEV did not stop in ${HEV_STOP_TIMEOUT_MS}ms")
+            }
+        }
         if (backend != null) AppLogRepository.info(LogSource.TUN, "[TUN] ${backend.label} stopped")
     }
 

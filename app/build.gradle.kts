@@ -24,6 +24,17 @@ if (gpsMockTest) {
 }
 
 android {
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                it.systemProperty("roborazzi.test.record", "true")
+                // The fake-edge tunnel test runs a Conscrypt TLS server on the test JVM.
+                it.jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+            }
+        }
+    }
+
     namespace = "com.uacspoofer.mobile"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
@@ -33,8 +44,8 @@ android {
         applicationId = "com.uacspoofer.mobile"
         minSdk = 24
         targetSdk = 35
-        versionCode = 590
-        versionName = "2.1.4"
+        versionCode = 930
+        versionName = "2.7.0-foxy13"
 
         buildConfigField("boolean", "TV_MODE", "false")
         buildConfigField("boolean", "GPS_MOCK_TEST", "false")
@@ -169,8 +180,12 @@ tasks.register("signReleaseWithRotation") {
     val lineage = rootProject.file("signing/rotation-lineage")
     val newSigningFile = rootProject.file("signing/new-signing.properties")
     doLast {
-        check(lineage.isFile) { "Missing ${lineage.absolutePath}. Create it with apksigner rotate." }
-        check(newSigningFile.isFile) { "Missing ${newSigningFile.absolutePath}" }
+        // Key rotation is optional: it only runs when the lineage and the new key exist. Without
+        // them the release APK keeps the single project key from signing.properties.
+        if (!lineage.isFile || !newSigningFile.isFile) {
+            logger.lifecycle("Skipping signReleaseWithRotation: no rotation lineage/new key configured")
+            return@doLast
+        }
         val rotated = Properties().apply { newSigningFile.inputStream().use { load(it) } }
         val oldStore = signingPropertiesFile.parentFile.resolve(signingProperties.getProperty("storeFile"))
         val newStore = newSigningFile.parentFile.resolve(rotated.getProperty("storeFile"))
@@ -334,6 +349,15 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+
+    // Screenshot rendering of real Compose screens on the JVM (no emulator available here).
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
 }
 
 val nativeCoreAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")

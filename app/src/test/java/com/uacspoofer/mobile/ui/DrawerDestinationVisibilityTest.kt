@@ -27,6 +27,7 @@ class DrawerDestinationVisibilityTest {
         assertTrue(DrawerDestination.TOR_SETTINGS.visibleFor(EngineMode.TOR_WEBTUNNEL))
         assertFalse(DrawerDestination.ADVANCED_SETTINGS.visibleFor(EngineMode.TOR_WEBTUNNEL))
         assertFalse(DrawerDestination.POW_SETTINGS.visibleFor(EngineMode.TOR_WEBTUNNEL))
+        assertFalse(DrawerDestination.FOXY_SETTINGS.visibleFor(EngineMode.TOR_WEBTUNNEL))
     }
 
     @Test
@@ -39,5 +40,20 @@ class DrawerDestinationVisibilityTest {
         assertTrue(DrawerDestination.POW_SETTINGS.visibleFor(EngineMode.UAC_POW))
         assertFalse(DrawerDestination.ADVANCED_SETTINGS.visibleFor(EngineMode.UAC_POW))
         assertFalse(DrawerDestination.TOR_SETTINGS.visibleFor(EngineMode.UAC_POW))
+        assertFalse(DrawerDestination.FOXY_SETTINGS.visibleFor(EngineMode.UAC_POW))
+    }
+
+    @Test
+    fun foxyOwnsItsSettingsRowAndHidesXrayOnlyRows() {
+        assertFalse(DrawerDestination.SNI_MAKER.visibleFor(EngineMode.UAC_FOXY))
+        assertFalse(DrawerDestination.ROUTE_SPEED_TEST.visibleFor(EngineMode.UAC_FOXY))
+        assertTrue(DrawerDestination.CONFIGS.visibleFor(EngineMode.UAC_FOXY))
+        assertTrue(DrawerDestination.HOME.visibleFor(EngineMode.UAC_FOXY))
+        assertTrue(DrawerDestination.SETTINGS.visibleFor(EngineMode.UAC_FOXY))
+        assertTrue(DrawerDestination.FOXY_SETTINGS.visibleFor(EngineMode.UAC_FOXY))
+        assertFalse(DrawerDestination.ADVANCED_SETTINGS.visibleFor(EngineMode.UAC_FOXY))
+        assertFalse(DrawerDestination.TOR_SETTINGS.visibleFor(EngineMode.UAC_FOXY))
+        assertFalse(DrawerDestination.POW_SETTINGS.visibleFor(EngineMode.UAC_FOXY))
+        assertFalse(DrawerDestination.DIRECT_SETTINGS.visibleFor(EngineMode.UAC_FOXY))
     }
 }

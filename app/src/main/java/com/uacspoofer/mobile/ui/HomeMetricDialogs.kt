@@ -1,6 +1,7 @@
 package com.uacspoofer.mobile.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.offset
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -173,6 +174,7 @@ internal fun HomeCountryDialog(
     onRefresh: () -> Unit,
     onDismissRequest: () -> Unit,
     throughPow: Boolean = false,
+    throughFoxy: Boolean = false,
 ) {
     val isPersian = LocalHomePersian.current
     val localizedFont = homeLocalizedFont()
@@ -181,6 +183,7 @@ internal fun HomeCountryDialog(
         visible = visible,
         title = homeText("My IP Information", "اطلاعات IP من"),
         subtitle = when {
+            throughFoxy -> homeText("Public exit details through Foxy", "مشخصات IP خروجی از طریق Foxy")
             throughPow -> homeText("Public exit details through UAC PoW", "مشخصات IP خروجی از طریق UAC PoW")
             throughTor -> homeText("Public exit details through Tor", "مشخصات IP خروجی از طریق Tor")
             else -> homeText("Public exit details through Xray", "مشخصات IP خروجی از طریق Xray")
@@ -266,6 +269,7 @@ internal fun HomeCountryDialog(
             ) {
                 Text(
                     text = "${info.provider} • ${formatTime(info.fetchedAtMs)} • ${when {
+                        throughFoxy -> "UAC Foxy SOCKS"
                         throughPow -> "UAC PoW SOCKS"
                         throughTor -> "Tor SOCKS"
                         else -> "Xray SOCKS"
@@ -317,6 +321,7 @@ internal fun HomePingDialog(
     onRefresh: () -> Unit,
     onDismissRequest: () -> Unit,
     throughPow: Boolean = false,
+    throughFoxy: Boolean = false,
 ) {
     val isPersian = LocalHomePersian.current
     val localizedFont = homeLocalizedFont()
@@ -325,6 +330,7 @@ internal fun HomePingDialog(
         visible = visible,
         title = homeText("Ping details", "جزئیات پینگ"),
         subtitle = when {
+            throughFoxy -> homeText("Live HTTPS measurement through Foxy", "سنجش زنده مسیر HTTPS از Foxy")
             throughPow -> homeText("Live HTTPS measurement through UAC PoW", "سنجش زنده مسیر HTTPS از UAC PoW")
             throughTor -> homeText("Live HTTPS measurement through Tor", "سنجش زنده مسیر HTTPS از Tor")
             else -> homeText("Live HTTPS route measurement", "سنجش زنده مسیر HTTPS")
@@ -482,6 +488,10 @@ internal fun HomePingDialog(
             MetricDetailRow(
                 homeText("Method", "روش تست"),
                 when {
+                    throughFoxy -> homeText(
+                        "HTTPS payload through Foxy SOCKS",
+                        "ارسال HTTPS از SOCKS مربوط به Foxy",
+                    )
                     throughPow -> homeText(
                         "HTTPS payload through UAC PoW SOCKS",
                         "ارسال HTTPS از SOCKS مربوط به UAC PoW",
@@ -725,21 +735,26 @@ private fun HomePowCountryDialogRow(
     direct: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    automaticCode: String = "",
+    engineLabel: String = "UAC PoW",
 ) {
     val isPersian = LocalHomePersian.current
     val localizedFont = homeLocalizedFont()
-    val automatic = code.isEmpty()
+    val automatic = code == automaticCode
     val title = if (automatic) {
         homeText("Automatic", "خودکار")
     } else {
-        PowRegions.name(code, nameLocale)
+        PowRegions.name(code, nameLocale).ifBlank { code }
     }
     val iso = code.uppercase(Locale.US)
     val subtitle = when {
-        direct && automatic -> homeText("Direct Boost exit", "خروجی شتاب دایرکت")
-        direct -> homeText("Psiphon exit · $iso", "خروجی سایفون · $iso")
+        automatic && engineLabel == "Mozilla VPN" ->
+            homeText("Mozilla picks the closest server", "نزدیک‌ترین سرور را موزیلا انتخاب می‌کند")
+        automatic && direct -> homeText("Direct Boost exit", "خروجی شتاب دایرکت")
         automatic -> homeText("Psiphon picks the best exit", "خروجی را Psiphon انتخاب می‌کند")
-        else -> homeText("UAC PoW EXIT • $iso", "خروجی UAC PoW • $iso")
+        engineLabel == "Mozilla VPN" -> homeText("Mozilla VPN • $iso", "سرور موزیلا • $iso")
+        direct -> homeText("Psiphon exit · $iso", "خروجی سایفون · $iso")
+        else -> homeText("$engineLabel EXIT • $iso", "خروجی $engineLabel • $iso")
     }
     val accent = if (connected) UacColors.ConnectedGreen else DialogBlue
     val highlighted = selected || connected
@@ -1314,3 +1329,109 @@ private fun latencyColorForDialog(latencyMs: Long?): Color = when {
 }
 
 private const val DIALOG_EXIT_MS = 170
+
+/**
+ * Foxy location picker. It is deliberately the PoW picker: same dialog, same rows, same wording
+ * ("Select country" / "N countries · tap to select"), only the country list comes from Mozilla's
+ * Firefox VPN server list.
+ */
+@Composable
+internal fun HomeFoxyCountryDialog(
+    visible: Boolean,
+    connected: Boolean,
+    onDismissRequest: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val store = remember(context) { com.uacspoofer.mobile.engine.foxy.FoxyEngineStore.get(context) }
+    val settingsFlow = store.settings
+    val settings by settingsFlow.collectAsStateWithLifecycle()
+    // The bundled list renders immediately (the picker must never be an empty box); Mozilla's own
+    // list replaces it as soon as the request answers.
+    var countries by remember {
+        mutableStateOf(com.uacspoofer.mobile.engine.foxy.GuardianClient.getBuiltInFallbackCountries())
+    }
+    var loading by remember { mutableStateOf(false) }
+    val isPersian = LocalHomePersian.current
+    val nameLocale = if (isPersian) Locale("fa") else Locale.ENGLISH
+
+    androidx.compose.runtime.LaunchedEffect(visible) {
+        if (!visible) return@LaunchedEffect
+        val remote = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { com.uacspoofer.mobile.engine.foxy.GuardianClient().fetchCountries() }.getOrDefault(emptyList())
+        }
+        if (remote.isNotEmpty()) countries = remote
+    }
+
+    val current = settings.serverCountry.ifBlank { FOXY_AUTOMATIC }
+    val codes = remember(countries, current, nameLocale) {
+        val sorted = countries
+            .filterNot { it.code.equals(FOXY_AUTOMATIC, ignoreCase = true) }
+            .sortedBy { PowRegions.name(it.code, nameLocale).lowercase(nameLocale) }
+            .map { it.code }
+        listOf(FOXY_AUTOMATIC) + sorted
+    }
+    val firstRowFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    AnimatedHomeMetricDialog(
+        visible = visible,
+        title = homeText("Select country", "انتخاب کشور"),
+        subtitle = if (isPersian) {
+            "${codes.size} کشور • برای انتخاب ضربه بزن"
+        } else {
+            "${codes.size} available • tap to select"
+        },
+        icon = Icons.Outlined.Public,
+        onDismissRequest = onDismissRequest,
+        expanded = true,
+        panelModifier = Modifier.fillMaxWidth().fillMaxHeight(0.72f),
+        initialFocus = firstRowFocus,
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(DialogInnerSurface, RoundedCornerShape(16.dp))
+                .border(1.dp, DialogBorder.copy(alpha = 0.55f), RoundedCornerShape(16.dp)),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            if (loading && codes.size <= 1) {
+                item {
+                    Text(
+                        homeText("Loading Firefox VPN servers…", "در حال دریافت سرورهای فایرفاکس…"),
+                        color = UacColors.TextSecondary,
+                        fontSize = 11.5.sp,
+                        fontFamily = homeLocalizedFont(),
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
+            itemsIndexed(codes, key = { _, code -> code }) { index, code ->
+                val selected = code.equals(current, ignoreCase = true)
+                HomePowCountryDialogRow(
+                    code = code,
+                    nameLocale = nameLocale,
+                    selected = selected,
+                    connected = connected && selected,
+                    direct = false,
+                    automaticCode = FOXY_AUTOMATIC,
+                    engineLabel = "Mozilla VPN",
+                    onClick = {
+                        if (!selected) {
+                            store.save(
+                                settings.copy(
+                                    serverCountry = code,
+                                    serverCity = "",
+                                ).validated(),
+                            )
+                        }
+                        onDismissRequest()
+                    },
+                    modifier = if (index == 0) Modifier.focusRequester(firstRowFocus) else Modifier,
+                )
+            }
+        }
+    }
+}
+
+/** Mozilla's own record for "Recommended location". */
+internal const val FOXY_AUTOMATIC = "REC"

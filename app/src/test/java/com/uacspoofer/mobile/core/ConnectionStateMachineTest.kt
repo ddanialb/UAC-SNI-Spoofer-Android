@@ -13,7 +13,10 @@ class ConnectionStateMachineTest {
         assertTrue(machine.tryBeginConnect())
         assertFalse(machine.tryBeginConnect())
         assertTrue(machine.markConnected())
-        assertFalse(machine.markConnected())
+        // markConnected is deliberately idempotent: several engines publish CONNECTED themselves
+        // before the service does, and returning false used to trigger a full cleanup of a live
+        // tunnel.
+        assertTrue(machine.markConnected())
         assertTrue(machine.tryBeginDisconnect())
         assertFalse(machine.tryBeginDisconnect())
         machine.markDisconnected()

@@ -1,5 +1,9 @@
 package com.uacspoofer.mobile.ui
 
+import com.uacspoofer.mobile.engine.foxy.FoxyPhase
+import com.uacspoofer.mobile.engine.foxy.FoxyStage
+import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
@@ -94,7 +98,7 @@ import com.uacspoofer.mobile.ui.theme.UacThemeState
 import com.uacspoofer.mobile.ui.theme.styleTokens
 import kotlinx.coroutines.delay
 
-enum class ConnectOverlayEngine { TOR, POW, DIRECT, GENERIC }
+enum class ConnectOverlayEngine { TOR, POW, FOXY, DIRECT, GENERIC }
 
 private enum class OverlayMode { HIDDEN, CONNECTING, SUCCESS, FAILED }
 
@@ -225,6 +229,31 @@ internal fun ConnectProgressOverlay(
                     0L,
                 )
             }
+            ConnectOverlayEngine.FOXY -> {
+                val status by FoxyStatusStore.status.collectAsStateWithLifecycle()
+                val steps = ConnectProgressModel.foxySteps(status)
+                val focused = steps.getOrNull(ConnectProgressModel.focusIndex(steps))?.detail.orEmpty()
+                val raw = if (status.detail.isNotBlank()) status.detail else focused
+                // Persian users see the stage in Persian; failures keep the technical message so
+                // the cause is never hidden behind a friendly translation.
+                val persian = LocalHomePersian.current
+                val stage = status.currentStage
+                val localized = if (stage != null) {
+                    FoxyStageCopy.progress(stage, persian)
+                } else {
+                    FoxyStatusCopy.stage(status.phase, persian)
+                }
+                val detail = if (localized != null && mode != OverlayMode.FAILED) {
+                    if (status.edgeHost.isNotBlank() && stage != null && stage.ordinal >= FoxyStage.TLS.ordinal) {
+                        "$localized · ${status.edgeHost}"
+                    } else {
+                        localized
+                    }
+                } else {
+                    raw
+                }
+                OverlayData(steps, detail, 0L)
+            }
             ConnectOverlayEngine.DIRECT -> {
                 val status = checkNotNull(directStatus)
                 val scan = status.ipScan
@@ -292,6 +321,7 @@ internal fun ConnectProgressOverlay(
         val engineName = when (engine) {
             ConnectOverlayEngine.TOR -> "Tor"
             ConnectOverlayEngine.POW -> "UAC PoW"
+            ConnectOverlayEngine.FOXY -> "Foxy"
             ConnectOverlayEngine.DIRECT -> "UAC Direct"
             ConnectOverlayEngine.GENERIC -> if (data.bootstrapping) "Auto" else ""
         }

@@ -1,5 +1,10 @@
 package com.uacspoofer.mobile.ui
 
+import com.uacspoofer.mobile.engine.foxy.FoxyPhase
+import com.uacspoofer.mobile.engine.foxy.FoxyStage
+import com.uacspoofer.mobile.engine.foxy.FoxyStageState
+import com.uacspoofer.mobile.engine.foxy.FoxyUiStatus
+
 import com.uacspoofer.mobile.auto.AutoBootstrapSnapshot
 import com.uacspoofer.mobile.auto.AutoStage
 import com.uacspoofer.mobile.auto.AutoStageState
@@ -84,6 +89,64 @@ object ConnectProgressModel {
                 else -> MiniStepState.PENDING
             }
             MiniStep(k, en, fa, st)
+        }
+    }
+
+    private data class FoxyGroup(val english: String, val persian: String, val stages: List<FoxyStage>)
+
+    private val foxyGroups = listOf(
+        FoxyGroup("Account", "حساب", listOf(FoxyStage.PREPARE, FoxyStage.ACCOUNT)),
+        FoxyGroup("Mozilla sign-in", "ورود موزیلا", listOf(FoxyStage.SIGN_IN, FoxyStage.PASS)),
+        FoxyGroup("Firefox edge", "سرور فایرفاکس", listOf(FoxyStage.SERVERS, FoxyStage.SELECT, FoxyStage.TLS, FoxyStage.H2)),
+        FoxyGroup("Tunnel", "تونل", listOf(FoxyStage.TUNNEL, FoxyStage.TUN, FoxyStage.RELAY)),
+        FoxyGroup("Ready", "آماده", listOf(FoxyStage.VERIFY, FoxyStage.READY)),
+    )
+
+    /**
+     * Collapses the engine's ordered stages into the five dots of the compact pill. The dots move
+     * forward one group at a time, because the stages behind them really did finish.
+     */
+    fun foxySteps(status: FoxyUiStatus): List<MiniStep> {
+        if (status.stages.isEmpty()) return foxyPlaceholderSteps(status.phase)
+        return foxyGroups.mapIndexed { index, group ->
+            val states = group.stages.map { status.stageState(it) }
+            val state = when {
+                states.any { it == FoxyStageState.FAILED } -> MiniStepState.FAILED
+                states.any { it == FoxyStageState.RUNNING } -> MiniStepState.RUNNING
+                states.all { it == FoxyStageState.DONE } -> MiniStepState.DONE
+                states.any { it == FoxyStageState.DONE } -> MiniStepState.RUNNING
+                else -> MiniStepState.PENDING
+            }
+            val detail = group.stages
+                .lastOrNull { status.stageState(it) == FoxyStageState.RUNNING }
+                ?.let { status.stageStatus(it)?.detail.orEmpty() }
+                .orEmpty()
+            MiniStep("foxy-$index", group.english, group.persian, state, detail)
+        }
+    }
+
+    /** Used before the engine reports its first stage (e.g. right after the tap). */
+    private fun foxyPlaceholderSteps(phase: FoxyPhase): List<MiniStep> {
+        val pos = when (phase) {
+            FoxyPhase.IDLE -> 0
+            FoxyPhase.STARTING -> 0
+            FoxyPhase.AUTH -> 1
+            FoxyPhase.EDGE -> 2
+            FoxyPhase.TUNNEL -> 3
+            FoxyPhase.CONNECTED -> foxyGroups.size
+            FoxyPhase.FAILED -> 0
+        }
+        return foxyGroups.mapIndexed { index, group ->
+            MiniStep(
+                "foxy-$index",
+                group.english,
+                group.persian,
+                when {
+                    index < pos -> MiniStepState.DONE
+                    index == pos -> MiniStepState.RUNNING
+                    else -> MiniStepState.PENDING
+                },
+            )
         }
     }
 

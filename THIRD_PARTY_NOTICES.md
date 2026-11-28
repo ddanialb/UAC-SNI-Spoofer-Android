@@ -91,3 +91,14 @@ The manual ClientHello fragmentation presets are adapted from [patterniha/Server
 - Bundled license: `app/src/main/assets/byedpi-LICENSE.txt`
 - Build script: `scripts/vendor-byedpi.ps1`
 - Upstream: https://github.com/hufrea/byedpi
+
+## Se7en Pro — Foxy (Firefox VPN) engine
+
+- Purpose: Engine `UAC_FOXY`. Foxy protocol implementation ported to Kotlin:
+  Mozilla account (FxA) login, Guardian proxy pass/quota, Remote Settings edge list,
+  Fastly MASQUE HTTP/2 CONNECT transport, Fastly challenge (PoW) solver, local SOCKS5/HTTP relay
+- License: MIT (permissive; ported into this AGPLv3 app with attribution headers preserved)
+- Upstream project: Se7en Pro — `Se7enPro/Services/Foxy/` (MIT copyright notice kept in each ported file)
+- Ported to: `app/src/main/java/com/uacspoofer/mobile/engine/foxy/`
+- Mapping and deviations: `docs/FOXY_MAPPING.md`
+- No Windows binaries or resources are redistributed; only source was translated.

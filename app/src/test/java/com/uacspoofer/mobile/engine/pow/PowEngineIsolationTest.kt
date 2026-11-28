@@ -62,13 +62,15 @@ class PowEngineIsolationTest {
         assertFalse(pow.isTor)
         assertFalse(EngineMode.XRAY_CF.isPow)
         assertFalse(EngineMode.TOR_WEBTUNNEL.isPow)
+        assertFalse(EngineMode.UAC_FOXY.isPow)
     }
 
     @Test
     fun homeToggleCyclesThreeEnginesWithoutSkippingPow() {
         assertEquals(EngineMode.TOR_WEBTUNNEL, EngineMode.XRAY_CF.next())
         assertEquals(EngineMode.UAC_POW, EngineMode.TOR_WEBTUNNEL.next())
-        assertEquals(EngineMode.UAC_DIRECT, EngineMode.UAC_POW.next())
+        assertEquals(EngineMode.UAC_FOXY, EngineMode.UAC_POW.next())
+        assertEquals(EngineMode.UAC_DIRECT, EngineMode.UAC_FOXY.next())
         assertEquals(EngineMode.XRAY_CF, EngineMode.UAC_DIRECT.next())
     }
 

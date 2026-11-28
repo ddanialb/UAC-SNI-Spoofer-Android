@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.uacspoofer.mobile.core.ConnectionState
 import com.uacspoofer.mobile.engine.pow.PowEngineStore
 import com.uacspoofer.mobile.engine.direct.DirectStatusStore
+import com.uacspoofer.mobile.engine.foxy.FoxyStatusStore
 import com.uacspoofer.mobile.engine.pow.PowLiveExit
 import com.uacspoofer.mobile.engine.tor.TorEngineStore
 import com.uacspoofer.mobile.logging.AppLogRepository
@@ -95,6 +96,7 @@ internal fun ConnectionAwareFeatureCard(
     val rawExitInfoState by exitInfoRepository.state.collectAsStateWithLifecycle()
     val powWarpOnly by PowLiveExit.warpOnlyState.collectAsStateWithLifecycle()
     val directStatus by DirectStatusStore.status.collectAsStateWithLifecycle()
+    val foxyStatus by FoxyStatusStore.status.collectAsStateWithLifecycle()
     val lookupId = ExitIpInfoRepository.lookupId(
         profile.id,
         torEngine = engineMode.isTor,
@@ -102,11 +104,13 @@ internal fun ConnectionAwareFeatureCard(
             engineMode.isTor -> torSettings.exitCountryCode
             engineMode.isPow && powWarpOnly -> ""
             engineMode.isPow -> powSettings.exitCountryCode
+            engineMode.isFoxy -> foxyStatus.countryCode
             else -> ""
         },
         powEngine = engineMode.isPow,
         powWarpOnly = engineMode.isPow && powWarpOnly,
         directModeKey = directStatus.exitLookupKey.takeIf { engineMode.isDirect },
+        foxyEngine = engineMode.isFoxy,
     )
     val exitInfoState = if (rawExitInfoState.profileId == lookupId) {
         rawExitInfoState
@@ -127,8 +131,8 @@ internal fun ConnectionAwareFeatureCard(
 
     LaunchedEffect(state, lookupId) {
         if (state == ConnectionState.CONNECTED) {
-            if (engineMode.isTor || engineMode.isPow) delay(8_000)
-            exitInfoRepository.refresh(profile.id, force = engineMode.isTor || engineMode.isPow)
+            if (engineMode.isTor || engineMode.isPow || engineMode.isFoxy) delay(8_000)
+            exitInfoRepository.refresh(profile.id, force = engineMode.isTor || engineMode.isPow || engineMode.isFoxy)
         } else {
             activeDialog = null
         }
@@ -174,6 +178,7 @@ internal fun ConnectionAwareFeatureCard(
         metrics = metrics,
         throughTor = engineMode.isTor,
         throughPow = engineMode.isPow,
+        throughFoxy = engineMode.isFoxy,
         onRefresh = {
             context.startService(
                 Intent(context, UacVpnService::class.java)
@@ -187,6 +192,7 @@ internal fun ConnectionAwareFeatureCard(
         state = exitInfoState,
         throughTor = engineMode.isTor,
         throughPow = engineMode.isPow,
+        throughFoxy = engineMode.isFoxy,
         onRefresh = { scope.launch { exitInfoRepository.refresh(profile.id, force = true) } },
         onDismissRequest = { activeDialog = null },
     )

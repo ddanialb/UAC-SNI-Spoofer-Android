@@ -110,7 +110,8 @@ jobs:
           chmod +x gradlew
           # A release build signed with the project key: the debug-signed APK was the reason
           # Google Play Protect refused to install it.
-          ls -l signing.properties uac-release.jks
+          test -f signing.properties || { echo "signing.properties is missing"; exit 1; }
+          test -f uac-release.jks || { echo "the release keystore is missing"; exit 1; }
           ./gradlew :app:assembleRelease \
             --stacktrace \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
